@@ -17,7 +17,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev libhts-dev
+          sudo apt-get install -y cmake g++ zlib1g-dev libbz2-dev liblzma-dev libcurl4-gnutls-dev libhts-dev
 
       - name: Cache CMake dependencies
         uses: actions/cache@v4
