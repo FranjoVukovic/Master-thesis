@@ -25,7 +25,10 @@ set(CORE_SOURCES
 )
 
 add_executable(MasterThesis src/main.cpp ${CORE_SOURCES})
-target_include_directories(MasterThesis PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(MasterThesis PRIVATE 
+    ${CMAKE_SOURCE_DIR}/include 
+    ${htslib_SOURCE_DIR}
+)
 target_link_libraries(MasterThesis PRIVATE hts)
 
 enable_testing()
@@ -38,7 +41,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 add_executable(MasterThesis_Test test/test.cpp ${CORE_SOURCES})
-target_include_directories(MasterThesis_Test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(MasterThesis_Test PRIVATE 
+    ${CMAKE_SOURCE_DIR}/include 
+    ${htslib_SOURCE_DIR}
+)
 
 target_link_libraries(MasterThesis_Test PRIVATE hts gtest_main)
 
