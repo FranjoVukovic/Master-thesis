@@ -1,13 +1,50 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MasterThesis VERSION 1.0)
+project(MasterThesis VERSION 1.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Outputs the executable to a 'bin' folder in your build directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Assuming main.cpp is in the root directory
-add_executable(MasterThesis src/main.cpp)
+include(FetchContent)
+
+FetchContent_Declare(
+    htslib
+    GIT_REPOSITORY https://github.com/samtools/htslib.git
+    GIT_TAG 1.20
+)
+
+FetchContent_MakeAvailable(htslib)
+
+set(CORE_SOURCES
+    src/Graph.cpp
+    src/ContactMatrix.cpp
+    src/BamParser.cpp
+)
+
+add_executable(MasterThesis src/main.cpp ${CORE_SOURCES})
+target_include_directories(MasterThesis PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(MasterThesis PRIVATE hts)
+
+enable_testing()
+
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG release-1.12.1
+)
+FetchContent_MakeAvailable(googletest)
+
+add_executable(MasterThesis_Test test/test.cpp ${CORE_SOURCES})
+target_include_directories(MasterThesis_Test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+target_link_libraries(MasterThesis_Test PRIVATE hts gtest_main)
+
+target_compile_definitions(MasterThesis_Test PRIVATE TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/test/data")
+target_compile_options(MasterThesis_Test PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+target_link_options(MasterThesis_Test PRIVATE -fsanitize=address)
+
+include(GoogleTest)
+gtest_discover_tests(MasterThesis_Test)

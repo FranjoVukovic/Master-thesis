@@ -1,0 +1,37 @@
+name: C++ Testing Pipeline
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-cmake-deps-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure CMake
+        run: cmake -S . -B build
+
+      - name: Build Project
+        run: make -C build
+
+      - name: Run Tests
+        run: |
+          cd build
+          ctest --output-on-failure

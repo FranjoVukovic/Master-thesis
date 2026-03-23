@@ -3,4 +3,8 @@
 cmake -S . -B build
 make -C build
 echo ""
-./build/bin/MasterThesis "$@"
+
+cd build
+ctest --output-on-failure
+
+cd ..
