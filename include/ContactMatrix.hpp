@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -31,6 +32,11 @@ public:
     void load_contacts(const std::string& filepath, const Graph& graph);
 
     void build_csr(size_t num_nodes);
+
+    // Remove all contacts involving nodes NOT in phasing_nodes.
+    // Call after build_csr(). Rebuilds the CSR in-place.
+    void filter_to_bubbles(const std::unordered_set<uint32_t>& phasing_nodes,
+                           size_t num_nodes);
 
     uint32_t get_contact(uint32_t node_a, uint32_t node_b) const;
 };

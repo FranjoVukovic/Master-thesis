@@ -88,6 +88,46 @@ void ContactMatrix::build_csr(size_t num_nodes) {
     }
 }
 
+void ContactMatrix::filter_to_bubbles(const std::unordered_set<uint32_t>& phasing_nodes,
+                                      size_t num_nodes) {
+    // Rebuild the CSR keeping only (u, v) entries where both u and v are phasing nodes.
+    std::vector<uint64_t> new_offsets(num_nodes + 1, 0);
+
+    for (size_t u = 0; u < num_nodes; ++u) {
+        if (!phasing_nodes.count(static_cast<uint32_t>(u))) continue;
+        uint64_t start = row_offsets[u];
+        uint64_t end   = row_offsets[u + 1];
+        for (uint64_t j = start; j < end; ++j) {
+            if (phasing_nodes.count(col_indices[j]))
+                new_offsets[u + 1]++;
+        }
+    }
+
+    for (size_t i = 0; i < num_nodes; ++i)
+        new_offsets[i + 1] += new_offsets[i];
+
+    std::vector<uint32_t> new_cols(new_offsets.back());
+    std::vector<uint32_t> new_vals(new_offsets.back());
+    std::vector<uint64_t> cur = new_offsets;
+
+    for (size_t u = 0; u < num_nodes; ++u) {
+        if (!phasing_nodes.count(static_cast<uint32_t>(u))) continue;
+        uint64_t start = row_offsets[u];
+        uint64_t end   = row_offsets[u + 1];
+        for (uint64_t j = start; j < end; ++j) {
+            if (phasing_nodes.count(col_indices[j])) {
+                uint64_t pos = cur[u]++;
+                new_cols[pos] = col_indices[j];
+                new_vals[pos] = values[j];
+            }
+        }
+    }
+
+    row_offsets = std::move(new_offsets);
+    col_indices = std::move(new_cols);
+    values      = std::move(new_vals);
+}
+
 uint32_t ContactMatrix::get_contact(uint32_t node_a, uint32_t node_b) const {
     uint64_t start = row_offsets[node_a];
     uint64_t end   = row_offsets[node_a + 1];

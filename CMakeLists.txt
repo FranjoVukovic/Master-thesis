@@ -41,6 +41,7 @@ set(CORE_SOURCES
     src/ContactMatrix.cpp
     src/BamParser.cpp
     src/TrioBinner.cpp
+    src/BubbleDetector.cpp
 )
 
 add_executable(MasterThesis src/main.cpp ${CORE_SOURCES})
