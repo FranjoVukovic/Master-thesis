@@ -48,7 +48,8 @@ void Graph::load_from_gfa(const std::string& filepath) {
             std::string type, name, sequence, token;
             iss >> type >> name >> sequence;
 
-            uint32_t node_length = (sequence == "*") ? 0 : sequence.length();
+            std::string seq_stored = (sequence == "*") ? "" : sequence;
+            uint32_t node_length = seq_stored.empty() ? 0 : static_cast<uint32_t>(seq_stored.size());
             uint32_t node_coverage = 0;
 
             while (iss >> token) {
@@ -64,13 +65,15 @@ void Graph::load_from_gfa(const std::string& filepath) {
                 id_to_name.push_back(name);
 
                 NodeMetadata meta;
-                meta.length = node_length;
+                meta.length   = node_length;
                 meta.coverage = node_coverage;
-                node_info.push_back(meta);
+                meta.sequence = std::move(seq_stored);
+                node_info.push_back(std::move(meta));
             } else {
                 uint32_t id = name_to_id[name];
-                node_info[id].length = node_length;
+                node_info[id].length   = node_length;
                 node_info[id].coverage = node_coverage;
+                node_info[id].sequence = std::move(seq_stored);
             }
         } 
         else if (line[0] == 'L') {
@@ -138,6 +141,10 @@ uint32_t Graph::get_id(const std::string& name) const {
 
 std::string Graph::get_name(uint32_t id) const {
     return id_to_name[id];
+}
+
+const std::string& Graph::get_sequence(uint32_t id) const {
+    return node_info[id].sequence;
 }
 
 size_t Graph::get_num_nodes() const {

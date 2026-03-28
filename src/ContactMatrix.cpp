@@ -68,17 +68,35 @@ void ContactMatrix::build_csr(size_t num_nodes) {
     }
 
     contact_builder.clear();
+
+    // Sort each row by column index so get_contact() can use binary search.
+    for (size_t i = 0; i < num_nodes; ++i) {
+        uint64_t row_start = row_offsets[i];
+        uint64_t row_end   = row_offsets[i + 1];
+        if (row_end - row_start <= 1) continue;
+
+        // Collect (col, val) pairs, sort by col, write back.
+        std::vector<std::pair<uint32_t,uint32_t>> row_data;
+        row_data.reserve(row_end - row_start);
+        for (uint64_t j = row_start; j < row_end; ++j)
+            row_data.push_back({col_indices[j], values[j]});
+        std::sort(row_data.begin(), row_data.end());
+        for (size_t j = 0; j < row_data.size(); ++j) {
+            col_indices[row_start + j] = row_data[j].first;
+            values[row_start + j]      = row_data[j].second;
+        }
+    }
 }
 
 uint32_t ContactMatrix::get_contact(uint32_t node_a, uint32_t node_b) const {
     uint64_t start = row_offsets[node_a];
-    uint64_t end = row_offsets[node_a + 1];
+    uint64_t end   = row_offsets[node_a + 1];
 
-    for (uint64_t i = start; i < end; ++i) {
-        if (col_indices[i] == node_b) {
-            return values[i];
-        }
-    }
-    
+    auto it = std::lower_bound(col_indices.begin() + start,
+                               col_indices.begin() + end,
+                               node_b);
+    if (it != col_indices.begin() + end && *it == node_b)
+        return values[it - col_indices.begin()];
+
     return 0;
 }

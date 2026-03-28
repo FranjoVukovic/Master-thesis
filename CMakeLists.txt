@@ -10,26 +10,46 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(FetchContent)
 
+# --- htslib ---
 FetchContent_Declare(
     htslib
     GIT_REPOSITORY https://github.com/samtools/htslib.git
     GIT_TAG 1.20
 )
-
 FetchContent_MakeAvailable(htslib)
+
+# --- yak ---
+# yak uses a Makefile, not CMake, so we populate only and compile sources manually.
+FetchContent_Declare(
+    yak
+    GIT_REPOSITORY https://github.com/lh3/yak.git
+    GIT_TAG        v0.1
+)
+FetchContent_Populate(yak)
+
+add_library(yak_lib STATIC
+    ${yak_SOURCE_DIR}/count.c
+    ${yak_SOURCE_DIR}/kthread.c
+)
+target_include_directories(yak_lib PUBLIC ${yak_SOURCE_DIR})
+# yak's count.c uses pthreads and zlib
+find_package(Threads REQUIRED)
+target_link_libraries(yak_lib PUBLIC Threads::Threads z)
 
 set(CORE_SOURCES
     src/Graph.cpp
     src/ContactMatrix.cpp
     src/BamParser.cpp
+    src/TrioBinner.cpp
 )
 
 add_executable(MasterThesis src/main.cpp ${CORE_SOURCES})
-target_include_directories(MasterThesis PRIVATE 
-    ${CMAKE_SOURCE_DIR}/include 
+target_include_directories(MasterThesis PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
     ${htslib_SOURCE_DIR}
+    ${yak_SOURCE_DIR}
 )
-target_link_libraries(MasterThesis PRIVATE hts)
+target_link_libraries(MasterThesis PRIVATE hts yak_lib)
 
 enable_testing()
 
@@ -41,12 +61,13 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 add_executable(MasterThesis_Test test/test.cpp ${CORE_SOURCES})
-target_include_directories(MasterThesis_Test PRIVATE 
-    ${CMAKE_SOURCE_DIR}/include 
+target_include_directories(MasterThesis_Test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
     ${htslib_SOURCE_DIR}
+    ${yak_SOURCE_DIR}
 )
 
-target_link_libraries(MasterThesis_Test PRIVATE hts gtest_main)
+target_link_libraries(MasterThesis_Test PRIVATE hts yak_lib gtest_main)
 
 target_compile_definitions(MasterThesis_Test PRIVATE TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/test/data")
 target_compile_options(MasterThesis_Test PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)

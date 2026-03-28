@@ -10,10 +10,10 @@ class Graph;
 
 struct PairHash {
     template <class T1, class T2>
-    std::size_t operator () (const std::pair<T1,T2>& p) const {
-        auto h1 = std::hash<T1>{}(p.first);
-        auto h2 = std::hash<T2>{}(p.second);
-        return h1 ^ (h2 << 1); 
+    std::size_t operator()(const std::pair<T1,T2>& p) const {
+        std::size_t h = std::hash<T1>{}(p.first);
+        h ^= std::hash<T2>{}(p.second) + 0x9e3779b9u + (h << 6) + (h >> 2);
+        return h;
     }
 };
 

@@ -13,10 +13,11 @@ struct Edge {
 };
 
 struct NodeMetadata {
-    int8_t phase = -1; 
+    int8_t phase = -1;
     uint32_t length = 0;
     uint32_t coverage = 0;
     bool is_reverse = false;
+    std::string sequence;  // raw nucleotide sequence from GFA S-line ('*' stored as empty)
 };
 
 class Graph {
@@ -37,6 +38,7 @@ public:
 
     uint32_t get_id(const std::string& name) const;
     std::string get_name(uint32_t id) const;
+    const std::string& get_sequence(uint32_t id) const;
 
     size_t get_num_nodes() const;
 };
