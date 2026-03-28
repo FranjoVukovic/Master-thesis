@@ -67,13 +67,13 @@ void Graph::load_from_gfa(const std::string& filepath) {
                 NodeMetadata meta;
                 meta.length   = node_length;
                 meta.coverage = node_coverage;
-                meta.sequence = std::move(seq_stored);
-                node_info.push_back(std::move(meta));
+                node_info.push_back(meta);
+                sequences_.push_back(std::move(seq_stored));
             } else {
                 uint32_t id = name_to_id[name];
                 node_info[id].length   = node_length;
                 node_info[id].coverage = node_coverage;
-                node_info[id].sequence = std::move(seq_stored);
+                sequences_[id] = std::move(seq_stored);
             }
         } 
         else if (line[0] == 'L') {
@@ -85,11 +85,13 @@ void Graph::load_from_gfa(const std::string& filepath) {
                 name_to_id[src_name] = current_id++;
                 id_to_name.push_back(src_name);
                 node_info.push_back(NodeMetadata());
+                sequences_.emplace_back();
             }
             if (name_to_id.find(tgt_name) == name_to_id.end()) {
                 name_to_id[tgt_name] = current_id++;
                 id_to_name.push_back(tgt_name);
                 node_info.push_back(NodeMetadata());
+                sequences_.emplace_back();
             }
 
             uint32_t u = name_to_id[src_name];
@@ -144,7 +146,40 @@ std::string Graph::get_name(uint32_t id) const {
 }
 
 const std::string& Graph::get_sequence(uint32_t id) const {
-    return node_info[id].sequence;
+    return sequences_[id];
+}
+
+void Graph::load_fasta(const std::string& filepath) {
+    std::ifstream file(filepath);
+    if (!file.is_open())
+        throw std::runtime_error("Cannot open FASTA file: " + filepath);
+
+    std::string line, current_name, current_seq;
+
+    auto flush = [&]() {
+        if (current_name.empty()) return;
+        auto it = name_to_id.find(current_name);
+        if (it != name_to_id.end()) {
+            uint32_t id = it->second;
+            if (sequences_[id].empty())
+                sequences_[id] = std::move(current_seq);
+        }
+        current_name.clear();
+        current_seq.clear();
+    };
+
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        if (line[0] == '>') {
+            flush();
+            // FASTA header: take everything up to the first whitespace as the name.
+            size_t space = line.find_first_of(" \t", 1);
+            current_name = line.substr(1, space - 1);
+        } else {
+            current_seq += line;
+        }
+    }
+    flush();
 }
 
 size_t Graph::get_num_nodes() const {

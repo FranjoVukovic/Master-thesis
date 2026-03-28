@@ -10,24 +10,28 @@ namespace {
 void print_usage(const char* program_name) {
     std::cerr
         << "Usage: " << program_name
-        << " -g <file.gfa> -b <file.bam> [-p <pat.yak> -m <mat.yak>]\n"
+        << " -g <file.gfa> -b <file.bam> [options]\n"
         << "\n"
         << "Required:\n"
-        << "  -g, --gfa   <path>   Assembly graph (GFA format)\n"
-        << "  -b, --bam   <path>   Hi-C / Pore-C alignments (BAM format)\n"
+        << "  -g, --gfa         <path>          Assembly graph (GFA format)\n"
+        << "  -b, --bam         <path>          Hi-C / Pore-C alignments (BAM format)\n"
         << "\n"
         << "Optional:\n"
-        << "  -p, --pat-yak <path> Paternal k-mer database (yak format) for trio binning\n"
-        << "  -m, --mat-yak <path> Maternal k-mer database (yak format) for trio binning\n"
-        << "  -h, --help           Show this message\n";
+        << "  -f, --fasta       <path>          Companion FASTA with sequences (needed when GFA uses '*')\n"
+        << "  -p, --pat-yak     <path>          Paternal k-mer database (.yak) for trio binning\n"
+        << "  -m, --mat-yak     <path>          Maternal k-mer database (.yak) for trio binning\n"
+        << "      --bubble-mode shasta|minhash  Bubble detection mode (default: shasta)\n"
+        << "  -h, --help                        Show this message\n";
 }
 } // namespace
 
 int main(int argc, char* argv[]) {
     std::string gfa_path;
     std::string bam_path;
+    std::string fasta_path;
     std::string pat_yak_path;
     std::string mat_yak_path;
+    std::string bubble_mode = "shasta";
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -46,10 +50,20 @@ int main(int argc, char* argv[]) {
             return argv[++i];
         };
 
-        if (arg == "-g" || arg == "--gfa") { gfa_path     = require_next(arg); continue; }
-        if (arg == "-b" || arg == "--bam") { bam_path     = require_next(arg); continue; }
+        if (arg == "-g" || arg == "--gfa")     { gfa_path     = require_next(arg); continue; }
+        if (arg == "-b" || arg == "--bam")     { bam_path     = require_next(arg); continue; }
+        if (arg == "-f" || arg == "--fasta")   { fasta_path   = require_next(arg); continue; }
         if (arg == "-p" || arg == "--pat-yak") { pat_yak_path = require_next(arg); continue; }
         if (arg == "-m" || arg == "--mat-yak") { mat_yak_path = require_next(arg); continue; }
+
+        if (arg == "--bubble-mode") {
+            bubble_mode = require_next(arg);
+            if (bubble_mode != "shasta" && bubble_mode != "minhash") {
+                std::cerr << "--bubble-mode must be 'shasta' or 'minhash'\n";
+                return 1;
+            }
+            continue;
+        }
 
         std::cerr << "Unknown argument: " << arg << "\n";
         print_usage(argv[0]);
@@ -72,6 +86,26 @@ int main(int argc, char* argv[]) {
         Graph graph;
         graph.load_from_gfa(gfa_path);
         std::cout << "Loaded graph: " << graph.get_num_nodes() << " nodes\n";
+
+        if (!fasta_path.empty()) {
+            graph.load_fasta(fasta_path);
+            std::cout << "Loaded sequences from FASTA: " << fasta_path << "\n";
+        }
+
+        if (bubble_mode == "minhash") {
+            // Verify at least one node has a sequence — MinHash requires them.
+            bool has_any_seq = false;
+            for (size_t i = 0; i < graph.get_num_nodes(); ++i) {
+                if (!graph.get_sequence(static_cast<uint32_t>(i)).empty()) {
+                    has_any_seq = true;
+                    break;
+                }
+            }
+            if (!has_any_seq)
+                throw std::runtime_error(
+                    "--bubble-mode minhash requires sequences, but all nodes have '*'. "
+                    "Provide a companion FASTA with -f/--fasta.");
+        }
 
         ContactMatrix contacts;
         contacts.load_contacts(bam_path, graph);
