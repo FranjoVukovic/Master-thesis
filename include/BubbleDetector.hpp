@@ -15,12 +15,6 @@ struct BubbleResult {
 
 class BubbleDetector {
 public:
-    // Currently implemented conventions (auto-detected from the majority of names):
-    //   Classic   : "000001F" / "000001F_003"     (strip trailing _NNN suffix)
-    //   PR-style  : "PR.000001.0" / "PR.000001.1" (strip trailing .N suffix)
-    //   DotSuffix : "contig1.0" / "contig1.1"     (strip trailing .N suffix)
-    //   HifiAsm   : "h1tg000001l" / "h2tg000001l" — detected but NOT YET implemented
-    //   Verkko    : "haplotype1-0000001" / "haplotype2-0000001" — detected but NOT YET implemented
     BubbleResult get_alts_from_shasta_names(const Graph& graph) const;
 
     BubbleResult find_unlabeled_alts(const Graph& graph,

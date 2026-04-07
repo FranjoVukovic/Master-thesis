@@ -1,8 +1,0 @@
-@HD	VN:1.6	SO:unsorted
-@SQ	SN:contig1	LN:4
-@SQ	SN:contig2	LN:4
-@SQ	SN:contig3	LN:4
-read1	99	contig1	1	60	4M	contig2	1	0	ACGT	*
-read1	147	contig2	1	60	4M	contig1	1	0	TGCA	*
-read2	99	contig2	1	60	4M	contig3	1	0	TGCA	*
-read2	147	contig3	1	60	4M	contig2	1	0	GGCC	*

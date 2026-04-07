@@ -1,0 +1,98 @@
+S	lc_a	ACGTACGTACGTACGT
+S	lc_b	ACGTACGTACGTACGT
+S	lc_c	ACGTACGTACGTACGT
+S	lc_d	ACGTACGTACGTACGT
+S	bb_start	ACGTACGTACGTACGT
+S	snp_src	ACGTACGTACGTACGT
+S	snp_A	ACGTACGTACGTACGT
+S	snp_B	ACGTACGTACGTACGT
+S	snp_snk	ACGTACGTACGTACGT
+S	mb_src	ACGTACGTACGTACGT
+S	mb_A	ACGTACGTACGTACGT
+S	mb_B	ACGTACGTACGTACGT
+S	mb_C	ACGTACGTACGTACGT
+S	mb_D	ACGTACGTACGTACGT
+S	mb_snk	ACGTACGTACGTACGT
+S	tb_src	ACGTACGTACGTACGT
+S	tb_A	ACGTACGTACGTACGT
+S	tb_B	ACGTACGTACGTACGT
+S	tb_C	ACGTACGTACGTACGT
+S	tb_snk	ACGTACGTACGTACGT
+S	nb_src	ACGTACGTACGTACGT
+S	nb_E	ACGTACGTACGTACGT
+S	nb_inner_src	ACGTACGTACGTACGT
+S	ni_A	ACGTACGTACGTACGT
+S	ni_B	ACGTACGTACGTACGT
+S	nb_inner_snk	ACGTACGTACGTACGT
+S	nb_snk	ACGTACGTACGTACGT
+S	sim_src	ACGTACGTACGTACGT
+S	sim_A	ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT
+S	sim_B	ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT
+S	sim_snk	ACGTACGTACGTACGT
+S	dis_src	ACGTACGTACGTACGT
+S	dis_A	AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+S	dis_B	CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+S	dis_snk	ACGTACGTACGTACGT
+S	star_src	*
+S	star_A	*
+S	star_B	*
+S	star_snk	*
+S	bb_end	ACGTACGTACGTACGT
+S	PR.000001.0	ACGT
+S	PR.000001.1	ACGT
+S	contig1.0	ACGT
+S	contig1.1	ACGT
+S	base.0	ACGT
+S	base.1	ACGT
+S	base.2	ACGT
+S	000001F	ACGT
+S	000001F_003	ACGT
+S	uniquenode	ACGT
+L	lc_a	+	lc_b	+	0M
+L	lc_b	+	lc_c	+	0M
+L	lc_c	+	lc_d	+	0M
+L	lc_d	+	bb_start	+	0M
+L	bb_start	+	snp_src	+	0M
+L	snp_src	+	snp_A	+	0M
+L	snp_src	+	snp_B	+	0M
+L	snp_A	+	snp_snk	+	0M
+L	snp_B	+	snp_snk	+	0M
+L	snp_snk	+	mb_src	+	0M
+L	mb_src	+	mb_A	+	0M
+L	mb_src	+	mb_B	+	0M
+L	mb_A	+	mb_C	+	0M
+L	mb_B	+	mb_D	+	0M
+L	mb_C	+	mb_snk	+	0M
+L	mb_D	+	mb_snk	+	0M
+L	mb_snk	+	tb_src	+	0M
+L	tb_src	+	tb_A	+	0M
+L	tb_src	+	tb_B	+	0M
+L	tb_src	+	tb_C	+	0M
+L	tb_A	+	tb_snk	+	0M
+L	tb_B	+	tb_snk	+	0M
+L	tb_C	+	tb_snk	+	0M
+L	tb_snk	+	nb_src	+	0M
+L	nb_src	+	nb_E	+	0M
+L	nb_src	+	nb_inner_src	+	0M
+L	nb_E	+	nb_snk	+	0M
+L	nb_inner_src	+	ni_A	+	0M
+L	nb_inner_src	+	ni_B	+	0M
+L	ni_A	+	nb_inner_snk	+	0M
+L	ni_B	+	nb_inner_snk	+	0M
+L	nb_inner_snk	+	nb_snk	+	0M
+L	nb_snk	+	sim_src	+	0M
+L	sim_src	+	sim_A	+	0M
+L	sim_src	+	sim_B	+	0M
+L	sim_A	+	sim_snk	+	0M
+L	sim_B	+	sim_snk	+	0M
+L	sim_snk	+	dis_src	+	0M
+L	dis_src	+	dis_A	+	0M
+L	dis_src	+	dis_B	+	0M
+L	dis_A	+	dis_snk	+	0M
+L	dis_B	+	dis_snk	+	0M
+L	dis_snk	+	star_src	+	0M
+L	star_src	+	star_A	+	0M
+L	star_src	+	star_B	+	0M
+L	star_A	+	star_snk	+	0M
+L	star_B	+	star_snk	+	0M
+L	star_snk	+	bb_end	+	0M

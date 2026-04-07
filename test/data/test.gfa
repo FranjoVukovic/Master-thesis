@@ -1,5 +1,0 @@
-S	contig1	ACGT	LN:i:4	RC:i:10
-S	contig2	TGCA	LN:i:4	RC:i:20
-S	contig3	GGCC	LN:i:4	RC:i:15
-L	contig1	+	contig2	+	0M
-L	contig2	+	contig3	+	0M
