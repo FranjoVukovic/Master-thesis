@@ -112,8 +112,8 @@ void Graph::load_from_stream(std::istream& in) {
                 overlap_length = parse_cigar_length(overlap);
             }
 
-            temp_links.push_back({u, v, overlap_length, u_rev, v_rev});    
-            temp_links.push_back({v, u, overlap_length, !v_rev, u_rev});
+            temp_links.push_back({u, v, overlap_length, u_rev, v_rev});
+            temp_links.push_back({v, u, overlap_length, !v_rev, !u_rev});
         }
     }
 

@@ -131,9 +131,9 @@ BubbleDetector::find_superbubbles(const Graph& graph) const {
 
     auto validate = [&](int32_t s, int32_t t) -> int32_t {
         if (s < 0 || t <= s + 1) return -1;
-        if (rmax(s, t - 1) != t) return -1; 
+        if (rmax(s, t - 1) != t) return -1;
         int32_t op = rmin(s + 1, t);
-        if (op == s)   return s; 
+        if (op == s)   return s;
         if (op >= 0 && is_entrance[op]) return op;
         if (op >= 0) return prev_ent[op];
         return -1;
