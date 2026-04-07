@@ -275,38 +275,40 @@ std::vector<std::vector<uint32_t>> BubbleDetector::build_directed_graph(const Gr
 }
 
 std::vector<int32_t> BubbleDetector::compute_topological_ranks(const std::vector<std::vector<uint32_t>>& adj) const {
-    const uint32_t num_split_nodes = static_cast<uint32_t>(adj.size());
-    std::vector<uint32_t> in_degree(num_split_nodes, 0);
+    const uint32_t n = static_cast<uint32_t>(adj.size());
+    enum Color : uint8_t { WHITE = 0, GRAY = 1, BLACK = 2 };
+    std::vector<uint8_t>  color(n, WHITE);
+    std::vector<uint32_t> post_order;
+    post_order.reserve(n);
+    std::vector<std::pair<uint32_t, size_t>> stack;
+    stack.reserve(n);
 
-    for (uint32_t u = 0; u < num_split_nodes; ++u) {
-        for (uint32_t v : adj[u]) {
-            in_degree[v]++;
-        }
-    }
-
-    std::queue<uint32_t> q;
-    for (uint32_t u = 0; u < num_split_nodes; ++u) {
-        if (in_degree[u] == 0) {
-            q.push(u);
-        }
-    }
-
-    std::vector<int32_t> rank(num_split_nodes, -1);
-    int32_t current_rank = 0;
-
-    while (!q.empty()) {
-        uint32_t u = q.front();
-        q.pop();
-        
-        rank[u] = current_rank++;
-
-        for (uint32_t v : adj[u]) {
-            if (--in_degree[v] == 0) {
-                q.push(v);
+    for (uint32_t root = 0; root < n; ++root) {
+        if (color[root] != WHITE) continue;
+        color[root] = GRAY;
+        stack.push_back({root, 0});
+        while (!stack.empty()) {
+            auto& frame = stack.back();
+            const uint32_t u = frame.first;
+            if (frame.second < adj[u].size()) {
+                const uint32_t v = adj[u][frame.second++];
+                if (color[v] == WHITE) {
+                    color[v] = GRAY;
+                    stack.push_back({v, 0});
+                }
+            } else {
+                color[u] = BLACK;
+                post_order.push_back(u);
+                stack.pop_back();
             }
         }
     }
 
+    std::vector<int32_t> rank(n, -1);
+    int32_t current_rank = 0;
+    for (auto it = post_order.rbegin(); it != post_order.rend(); ++it) {
+        rank[*it] = current_rank++;
+    }
     return rank;
 }
 
