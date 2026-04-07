@@ -8,6 +8,7 @@ struct RawLink {
     uint32_t source_id;
     uint32_t target_id;
     uint32_t overlap_length;
+    bool source_rev;
     bool target_rev;
 };
 
@@ -32,15 +33,22 @@ Graph::Graph() = default;
 
 void Graph::load_from_gfa(const std::string& filepath) {
     std::ifstream file(filepath);
-    if (!file.is_open()) {
-        throw std::runtime_error("Not possible to open GFA file: " + filepath);
-    }
+    if (!file.is_open())
+        throw std::runtime_error("Cannot open GFA file: " + filepath);
+    load_from_stream(file);
+}
 
+void Graph::load_from_gfa_string(const std::string& content) {
+    std::istringstream iss(content);
+    load_from_stream(iss);
+}
+
+void Graph::load_from_stream(std::istream& in) {
     std::string line;
     std::vector<RawLink> temp_links;
     uint32_t current_id = 0;
 
-    while (std::getline(file, line)) {
+    while (std::getline(in, line)) {
         if (line.empty()) continue;
 
         if (line[0] == 'S') {
@@ -104,8 +112,8 @@ void Graph::load_from_gfa(const std::string& filepath) {
                 overlap_length = parse_cigar_length(overlap);
             }
 
-            temp_links.push_back({u, v, overlap_length, v_rev});    
-            temp_links.push_back({v, u, overlap_length, u_rev});
+            temp_links.push_back({u, v, overlap_length, u_rev, v_rev});    
+            temp_links.push_back({v, u, overlap_length, !v_rev, u_rev});
         }
     }
 
@@ -126,7 +134,7 @@ void Graph::load_from_gfa(const std::string& filepath) {
 
     for (const auto& link : temp_links) {
         uint64_t pos = current_offsets[link.source_id]++;
-        edges[pos] = {link.target_id, link.overlap_length, link.target_rev};
+        edges[pos] = {link.target_id, link.overlap_length, link.source_rev, link.target_rev};
     }
 }
 
@@ -172,7 +180,6 @@ void Graph::load_fasta(const std::string& filepath) {
         if (line.empty()) continue;
         if (line[0] == '>') {
             flush();
-            // FASTA header: take everything up to the first whitespace as the name.
             size_t space = line.find_first_of(" \t", 1);
             current_name = line.substr(1, space - 1);
         } else {
