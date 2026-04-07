@@ -9,143 +9,306 @@
 #include <stdexcept>
 #include <unordered_map>
 
-// ============================================================
-// Superbubble finding via degree-2 chain tracing
-// ============================================================
-//
-// In a bidirectional assembly graph every L-line creates u↔v and v↔u,
-// so the graph is effectively undirected.
-//
-// Key observation:
-//   - Interior nodes of a bubble branch connect ONLY to their two path
-//     neighbours (source/sink or adjacent chain nodes), giving degree = 2.
-//   - Source and sink nodes have degree ≥ 3 because they also connect to
-//     the surrounding unique (non-bubble) regions.
-//
-// Algorithm:
-//   1. Trace every connected chain of degree-2 nodes.
-//      The two endpoints of a chain are the first nodes in each direction
-//      with degree ≠ 2.
-//   2. Group chains by their endpoint pair {ep0, ep1}.
-//   3. If exactly 2 chains share the same endpoint pair → superbubble.
-
 std::vector<BubbleDetector::Bubble>
 BubbleDetector::find_superbubbles(const Graph& graph) const {
-    const size_t n = graph.get_num_nodes();
+    auto adj = build_directed_graph(graph);
+    auto rank = compute_topological_ranks(adj);
 
-    // Build a plain adjacency list (vector<vector>) for fast iteration.
-    std::vector<std::vector<uint32_t>> adj(n);
-    for (uint32_t u = 0; u < n; ++u) {
-        auto [beg, end] = graph.get_neighbors(u);
-        for (auto it = beg; it != end; ++it)
-            adj[u].push_back(it->target_id);
+    int32_t num_valid = 0;
+    for (int32_t r : rank) {
+        if (r >= num_valid) num_valid = r + 1;
     }
 
-    // Trace chains of degree-2 nodes.
-    // Map: normalised endpoint pair → list of interior-node chains.
-    using EndpointPair = std::pair<uint32_t, uint32_t>;
-    std::unordered_map<uint64_t, std::vector<std::vector<uint32_t>>> ep_chains;
+    if (num_valid < 4) return {};
 
-    auto encode_ep = [](uint32_t a, uint32_t b) -> uint64_t {
-        // Pack two uint32_t into one uint64_t key (a ≤ b).
-        if (a > b) std::swap(a, b);
-        return (static_cast<uint64_t>(a) << 32) | b;
+    std::vector<uint32_t> rank_to_split(num_valid);
+    for (uint32_t split_node = 0; split_node < rank.size(); ++split_node) {
+        if (rank[split_node] != -1) {
+            rank_to_split[rank[split_node]] = split_node;
+        }
+    }
+
+    std::vector<int32_t> out_cnt(num_valid, 0), in_cnt(num_valid, 0);
+    std::vector<int32_t> out_child(num_valid, -1); 
+    std::vector<int32_t> in_parent(num_valid,  num_valid);  
+
+    for (int32_t u_rank = 0; u_rank < num_valid; ++u_rank) {
+        uint32_t u_split = rank_to_split[u_rank];
+        for (uint32_t v_split : adj[u_split]) {
+            int32_t v_rank = rank[v_split];
+            if (v_rank == -1) continue; 
+
+            if (u_rank < v_rank) {
+                ++out_cnt[u_rank]; ++in_cnt[v_rank];
+                if (v_rank > out_child[u_rank]) out_child[u_rank] = v_rank;
+                if (u_rank < in_parent[v_rank]) in_parent[v_rank] = u_rank;
+            }
+        }
+    }
+
+    std::vector<uint32_t> out_off(num_valid + 1, 0);
+    for (int32_t i = 0; i < num_valid; ++i) out_off[i + 1] = out_off[i] + out_cnt[i];
+    std::vector<uint32_t> out_nbr(out_off[num_valid]);
+    {
+        std::vector<uint32_t> op(num_valid, 0);
+        for (int32_t u_rank = 0; u_rank < num_valid; ++u_rank) {
+            uint32_t u_split = rank_to_split[u_rank];
+            for (uint32_t v_split : adj[u_split]) {
+                int32_t v_rank = rank[v_split];
+                if (v_rank != -1 && u_rank < v_rank) {
+                    out_nbr[out_off[u_rank] + op[u_rank]++] = static_cast<uint32_t>(v_rank);
+                }
+            }
+        }
+    }
+
+    int LOG = 1;
+    while ((1 << LOG) <= num_valid) ++LOG;
+
+    std::vector<std::vector<int32_t>> sp_max(LOG, std::vector<int32_t>(num_valid, -1));
+    std::vector<std::vector<int32_t>> sp_min(LOG, std::vector<int32_t>(num_valid,  num_valid));
+    for (int32_t i = 0; i < num_valid; ++i) { sp_max[0][i] = out_child[i]; sp_min[0][i] = in_parent[i]; }
+    for (int k = 1; k < LOG; ++k) {
+        const int32_t half = 1 << (k - 1);
+        for (int32_t i = 0; i + (1 << k) <= num_valid; ++i) {
+            sp_max[k][i] = std::max(sp_max[k-1][i], sp_max[k-1][i + half]);
+            sp_min[k][i] = std::min(sp_min[k-1][i], sp_min[k-1][i + half]);
+        }
+    }
+    std::vector<int> lg(num_valid + 1, 0);
+    for (int i = 2; i <= num_valid; ++i) lg[i] = lg[i / 2] + 1;
+
+    auto rmax = [&](int32_t l, int32_t r) -> int32_t {
+        if (l > r) return -1;
+        int k = lg[r - l + 1];
+        return std::max(sp_max[k][l], sp_max[k][r - (1 << k) + 1]);
+    };
+    auto rmin = [&](int32_t l, int32_t r) -> int32_t {
+        if (l > r) return num_valid;
+        int k = lg[r - l + 1];
+        return std::min(sp_min[k][l], sp_min[k][r - (1 << k) + 1]);
     };
 
-    std::vector<bool> visited(n, false);
+    std::vector<bool> is_exit(num_valid, false), is_entrance(num_valid, false);
 
-    for (uint32_t seed = 0; seed < n; ++seed) {
-        if (visited[seed] || adj[seed].size() != 2) continue;
-
-        // --- trace left (direction 0) ---
-        std::vector<uint32_t> left;
-        {
-            uint32_t prev = seed;
-            uint32_t curr = adj[seed][0];
-            while (!visited[curr] && adj[curr].size() == 2) {
-                visited[curr] = true;
-                left.push_back(curr);
-                uint32_t next = (adj[curr][0] == prev) ? adj[curr][1] : adj[curr][0];
-                prev = curr;
-                curr = next;
-            }
-            // curr is now the left endpoint (degree ≠ 2 or already visited chain)
-            left.push_back(curr);  // temporarily store endpoint at end
+    std::vector<std::vector<uint32_t>> in_nbrs(num_valid);
+    for (int32_t u = 0; u < num_valid; ++u) {
+        for (uint32_t j = out_off[u]; j < out_off[u + 1]; ++j) {
+            in_nbrs[out_nbr[j]].push_back(u);
         }
-        uint32_t ep0 = left.back();
-        left.pop_back();  // remove endpoint, keep only interior
-
-        // --- trace right (direction 1) ---
-        std::vector<uint32_t> right;
-        {
-            uint32_t prev = seed;
-            uint32_t curr = adj[seed][1];
-            while (!visited[curr] && adj[curr].size() == 2) {
-                visited[curr] = true;
-                right.push_back(curr);
-                uint32_t next = (adj[curr][0] == prev) ? adj[curr][1] : adj[curr][0];
-                prev = curr;
-                curr = next;
-            }
-            right.push_back(curr);
-        }
-        uint32_t ep1 = right.back();
-        right.pop_back();
-
-        visited[seed] = true;
-
-        // Endpoints must be distinct (avoid self-loops collapsing to a single node).
-        if (ep0 == ep1) continue;
-
-        // Build the full interior chain: reversed(left) + seed + right.
-        std::vector<uint32_t> chain;
-        chain.reserve(left.size() + 1 + right.size());
-        for (auto it = left.rbegin(); it != left.rend(); ++it)
-            chain.push_back(*it);
-        chain.push_back(seed);
-        chain.insert(chain.end(), right.begin(), right.end());
-
-        ep_chains[encode_ep(ep0, ep1)].push_back(std::move(chain));
     }
 
-    // Collect bubbles: endpoint pairs with exactly 2 chains.
+    for (int32_t v_rank = 0; v_rank < num_valid; ++v_rank) {
+        for (uint32_t u : in_nbrs[v_rank]) {
+            if (out_cnt[u] == 1) { 
+                is_exit[v_rank] = true; 
+                break; 
+            }
+        }
+
+        for (uint32_t j = out_off[v_rank]; j < out_off[v_rank + 1]; ++j) {
+            if (in_cnt[static_cast<int32_t>(out_nbr[j])] == 1) { 
+                is_entrance[v_rank] = true; 
+                break; 
+            }
+        }
+    }
+
+    struct Cand { int32_t node; bool is_ent; }; 
+    std::vector<Cand> cands;
+    cands.reserve(2 * num_valid);
+
+    std::vector<int32_t> prev_ent(num_valid, -1);
+    std::vector<int32_t> alt_ent(num_valid,  -1);
+    std::vector<int32_t> ent_pos(num_valid,  -1);
+
+    int32_t last_ent = -1;
+    for (int32_t v = 0; v < num_valid; ++v) {
+        prev_ent[v] = last_ent;
+        if (is_exit[v])     cands.push_back({v, false});
+        if (is_entrance[v]) { ent_pos[v] = static_cast<int32_t>(cands.size()); cands.push_back({v, true}); last_ent = v; }
+    }
+
+    auto validate = [&](int32_t s, int32_t t) -> int32_t {
+        if (s < 0 || t <= s + 1) return -1;
+        if (rmax(s, t - 1) != t) return -1; 
+        int32_t op = rmin(s + 1, t);
+        if (op == s)   return s; 
+        if (op >= 0 && is_entrance[op]) return op;
+        if (op >= 0) return prev_ent[op];
+        return -1;
+    };
+
+    auto bfs_branch = [&](uint32_t head, uint32_t s_id, uint32_t t_id)
+            -> std::vector<uint32_t> {
+        const uint32_t span = t_id - s_id - 1;
+        std::vector<uint32_t> res;
+        if (span == 0) return res;
+        std::vector<uint8_t> vis(span, 0);
+        res.push_back(head); vis[head - s_id - 1] = 1;
+        for (size_t qi = 0; qi < res.size(); ++qi) {
+            for (uint32_t j = out_off[res[qi]]; j < out_off[res[qi] + 1]; ++j) {
+                uint32_t w = out_nbr[j];
+                if (w > s_id && w < t_id && !vis[w - s_id - 1]) {
+                    vis[w - s_id - 1] = 1; res.push_back(w);
+                }
+            }
+        }
+        return res;
+    };
+
     std::vector<Bubble> bubbles;
-    for (auto& [key, chains] : ep_chains) {
-        if (chains.size() != 2) continue;  // only diploid (2-branch) bubbles
 
-        uint32_t ep0 = static_cast<uint32_t>(key >> 32);
-        uint32_t ep1 = static_cast<uint32_t>(key & 0xFFFFFFFF);
+    auto rank_to_phys = [&](const std::vector<uint32_t>& ranks) {
+        std::vector<uint32_t> phys;
+        phys.reserve(ranks.size());
+        for (uint32_t r : ranks) {
+            phys.push_back(rank_to_split[r] / 2); 
+        }
+        std::sort(phys.begin(), phys.end());
+        phys.erase(std::unique(phys.begin(), phys.end()), phys.end());
+        return phys;
+    };
 
-        bubbles.push_back({ep0, ep1,
-                           std::move(chains[0]),
-                           std::move(chains[1])});
+    auto emit = [&](int32_t s, int32_t t) {
+        uint32_t su = static_cast<uint32_t>(s), tu = static_cast<uint32_t>(t);
+        std::vector<uint32_t> heads;
+        for (uint32_t j = out_off[su]; j < out_off[su + 1]; ++j) {
+            uint32_t w = out_nbr[j];
+            if (w > su && w < tu) heads.push_back(w);
+        }
+        if (heads.size() < 2) return;
+        std::vector<uint32_t> ba, bb;
+        if (heads.size() == 2) {
+            ba = bfs_branch(heads[0], su, tu);
+            bb = bfs_branch(heads[1], su, tu);
+        } else {
+            ba.reserve(tu - su - 1);
+            for (uint32_t id = su + 1; id < tu; ++id) ba.push_back(id);
+        }
+        
+        uint32_t phys_s = rank_to_split[su] / 2;
+        uint32_t phys_t = rank_to_split[tu] / 2;
+
+        bubbles.push_back({phys_s, phys_t, rank_to_phys(ba), rank_to_phys(bb)});
+    };
+
+    int32_t tail = static_cast<int32_t>(cands.size()) - 1;
+
+    std::function<void(int32_t)> rsb = [&](int32_t start_node) {
+        if (tail < 0) return;
+        
+        int32_t exit_node = cands[tail].node;
+
+        if (start_node < 0 || exit_node < 0 || start_node >= exit_node) {
+            --tail; 
+            return;
+        }
+
+        int32_t s     = prev_ent[exit_node];
+        int32_t valid = -1;
+        while (s >= start_node && s >= 0) {
+            valid = validate(s, exit_node);
+            if (valid == s || valid == alt_ent[s] || valid == -1) break;
+            alt_ent[s] = valid;
+            s = valid;
+        }
+
+        --tail;   
+
+        if (s >= start_node && s >= 0 && valid == s) {
+            emit(s, exit_node);
+
+            const int32_t sp = ent_pos[s]; 
+
+            while (tail > sp) {
+                if (!cands[tail].is_ent) {
+                    const int32_t nxt = (sp + 1 <= tail) ? cands[sp + 1].node : -1;
+                    rsb(nxt); 
+                } else {
+                    --tail;   
+                }
+            }
+        }
+    };
+
+    while (tail >= 0) {
+        if (cands[tail].is_ent) {
+            --tail; 
+        } else {
+            rsb(cands[0].node);
+        }
     }
 
     return bubbles;
 }
-
-// ============================================================
-// Branch sequence helpers
-// ============================================================
 
 std::string BubbleDetector::branch_sequence(const std::vector<uint32_t>& branch,
                                              const Graph& graph) const {
     std::string seq;
     for (uint32_t id : branch) {
         const std::string& s = graph.get_sequence(id);
-        if (s.empty()) return {};  // node has no sequence
+        if (s.empty()) continue;  
         seq += s;
     }
-    return seq;
+    return seq;  
 }
 
-// ============================================================
-// MinHash sketch
-// ============================================================
-//
-// We use canonical k-mers (min of forward and rev-complement 2-bit encodings)
-// hashed with a MurmurHash3-style 64-bit finaliser.
-// The sketch is the 'sketch_size' smallest hash values (sorted).
+std::vector<std::vector<uint32_t>> BubbleDetector::build_directed_graph(const Graph& graph) const {
+    const uint32_t n = static_cast<uint32_t>(graph.get_num_nodes());
+    
+    std::vector<std::vector<uint32_t>> adj(2 * n);
+
+    for (uint32_t u = 0; u < n; ++u) {
+        auto [beg, end] = graph.get_neighbors(u);
+        for (auto it = beg; it != end; ++it) {
+            uint32_t v = it->target_id;
+            
+            uint32_t u_split = it->source_rev ? (2 * u + 1) : (2 * u);
+            uint32_t v_split = it->target_rev ? (2 * v + 1) : (2 * v);
+            
+            adj[u_split].push_back(v_split);
+        }
+    }
+    
+    return adj;
+}
+
+std::vector<int32_t> BubbleDetector::compute_topological_ranks(const std::vector<std::vector<uint32_t>>& adj) const {
+    const uint32_t num_split_nodes = static_cast<uint32_t>(adj.size());
+    std::vector<uint32_t> in_degree(num_split_nodes, 0);
+
+    for (uint32_t u = 0; u < num_split_nodes; ++u) {
+        for (uint32_t v : adj[u]) {
+            in_degree[v]++;
+        }
+    }
+
+    std::queue<uint32_t> q;
+    for (uint32_t u = 0; u < num_split_nodes; ++u) {
+        if (in_degree[u] == 0) {
+            q.push(u);
+        }
+    }
+
+    std::vector<int32_t> rank(num_split_nodes, -1);
+    int32_t current_rank = 0;
+
+    while (!q.empty()) {
+        uint32_t u = q.front();
+        q.pop();
+        
+        rank[u] = current_rank++;
+
+        for (uint32_t v : adj[u]) {
+            if (--in_degree[v] == 0) {
+                q.push(v);
+            }
+        }
+    }
+
+    return rank;
+}
 
 static inline uint64_t mix64(uint64_t x) {
     x ^= x >> 33;
@@ -156,7 +319,6 @@ static inline uint64_t mix64(uint64_t x) {
     return x;
 }
 
-// 2-bit encoding: A=0, C=1, G=2, T=3.  Returns 4 for ambiguous bases.
 static const uint8_t BASE2BIT[256] = {
     4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,
     4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,
@@ -175,7 +337,6 @@ std::vector<uint64_t> BubbleDetector::compute_sketch(const std::string& seq,
 
     const uint64_t mask = (k < 32) ? ((1ULL << (2 * k)) - 1) : UINT64_MAX;
 
-    // We maintain a max-heap of size sketch_size holding the smallest hashes seen.
     std::vector<uint64_t> heap;
     heap.reserve(sketch_size + 1);
 
@@ -191,12 +352,12 @@ std::vector<uint64_t> BubbleDetector::compute_sketch(const std::string& seq,
         rev &= mask;
         if (++valid < k) continue;
 
-        uint64_t h = mix64(std::min(fwd, rev));  // canonical k-mer
+        uint64_t h = mix64(std::min(fwd, rev));  
 
         if (static_cast<int>(heap.size()) < sketch_size) {
             heap.push_back(h);
             if (static_cast<int>(heap.size()) == sketch_size)
-                std::make_heap(heap.begin(), heap.end());  // max-heap
+                std::make_heap(heap.begin(), heap.end());  
         } else if (h < heap.front()) {
             std::pop_heap(heap.begin(), heap.end());
             heap.back() = h;
@@ -212,7 +373,6 @@ double BubbleDetector::estimate_jaccard(const std::vector<uint64_t>& a,
                                          const std::vector<uint64_t>& b) const {
     if (a.empty() || b.empty()) return 0.0;
 
-    // Count intersection of two sorted vectors.
     size_t shared = 0;
     size_t i = 0, j = 0;
     while (i < a.size() && j < b.size()) {
@@ -221,14 +381,10 @@ double BubbleDetector::estimate_jaccard(const std::vector<uint64_t>& a,
         else                  { ++shared; ++i; ++j; }
     }
 
-    // MinHash Jaccard estimate: shared / union-size (bounded by sketch).
     size_t union_size = a.size() + b.size() - shared;
     return union_size == 0 ? 0.0 : static_cast<double>(shared) / union_size;
 }
 
-// ============================================================
-// find_unlabeled_alts  (topology + MinHash)
-// ============================================================
 
 BubbleResult BubbleDetector::find_unlabeled_alts(const Graph& graph,
                                                    int    k,
@@ -237,24 +393,25 @@ BubbleResult BubbleDetector::find_unlabeled_alts(const Graph& graph,
     BubbleResult result;
 
     for (const Bubble& b : find_superbubbles(graph)) {
-        // Concatenate sequences for each branch.
+
+        if (b.branch_b.empty()) {
+            for (uint32_t v : b.branch_a) result.phasing_nodes.insert(v);
+            continue;
+        }
+
         std::string seq_a = branch_sequence(b.branch_a, graph);
         std::string seq_b = branch_sequence(b.branch_b, graph);
-
-        // If sequences are unavailable, skip MinHash but still record as phasing nodes
-        // (the topology alone already confirms the bubble structure).
         bool seq_ok = !seq_a.empty() && !seq_b.empty();
 
         if (seq_ok) {
             auto sketch_a = compute_sketch(seq_a, k, sketch_size);
             auto sketch_b = compute_sketch(seq_b, k, sketch_size);
             double jac = estimate_jaccard(sketch_a, sketch_b);
-            if (jac < jaccard_threshold) continue;  // sequences too dissimilar — skip
+            if (jac < jaccard_threshold) continue; 
         }
 
-        // Record phasing nodes and alt-map for both branches.
-        uint32_t rep_a = b.branch_a.empty() ? b.source : b.branch_a[0];
-        uint32_t rep_b = b.branch_b.empty() ? b.sink   : b.branch_b[0];
+        uint32_t rep_a = b.branch_a[0];
+        uint32_t rep_b = b.branch_b[0];
 
         for (uint32_t v : b.branch_a) {
             result.phasing_nodes.insert(v);
@@ -269,46 +426,43 @@ BubbleResult BubbleDetector::find_unlabeled_alts(const Graph& graph,
     return result;
 }
 
-// ============================================================
-// Shasta naming
-// ============================================================
-
-BubbleDetector::ShastaStyle
+BubbleDetector::AssemblerStyle
 BubbleDetector::detect_style(const Graph& graph) const {
-    // Classic  : name matches /^\d+[FR](_\d+)?$/   alt suffix is _NNN
-    // PR-style : name matches /^PR\.\d+\.\d+$/      alt suffix is .\d
-    // DotSuffix: name matches /^.+\.\d+$/            alt suffix is .\d
-    //
-    // Vote on a sample of up to 1000 node names.
-    const std::regex re_classic  {R"(^\d+[FR](_\d+)?$)"};
-    const std::regex re_pr       {R"(^PR\.\d+\.\d+$)"};
-    const std::regex re_dot      {R"(^.+\.\d+$)"};
+    const std::regex re_classic  {R"(^\d+[FR](_\d+)?$)"};       // Shasta classic
+    const std::regex re_pr       {R"(^PR\.\d+\.\d+$)"};         // Shasta PR-style
+    const std::regex re_dot      {R"(^.+\.\d+$)"};              // generic dot-suffix
+    const std::regex re_hifiasm  {R"(^h[12]tg\d+l$)"};          // Hifiasm: h1tg000001l / h2tg000001l
+    const std::regex re_verkko   {R"(^haplotype[12]-\d+$)"};    // Verkko:  haplotype1-0000001 / haplotype2-0000001
 
-    int votes[3] = {0, 0, 0};
+    int votes[5] = {0, 0, 0, 0, 0};  // Classic, PRStyle, DotSuffix, HifiAsm, Verkko
     size_t limit = std::min(graph.get_num_nodes(), size_t{1000});
 
     for (size_t i = 0; i < limit; ++i) {
         const std::string& name = graph.get_name(static_cast<uint32_t>(i));
         if (std::regex_match(name, re_classic)) ++votes[0];
         if (std::regex_match(name, re_pr))      ++votes[1];
-        if (std::regex_match(name, re_dot))      ++votes[2];
+        if (std::regex_match(name, re_dot))     ++votes[2];
+        if (std::regex_match(name, re_hifiasm)) ++votes[3];
+        if (std::regex_match(name, re_verkko))  ++votes[4];
     }
 
     int best = static_cast<int>(
-        std::max_element(votes, votes + 3) - votes);
+        std::max_element(votes, votes + 5) - votes);
 
     switch (best) {
-        case 0:  return ShastaStyle::Classic;
-        case 1:  return ShastaStyle::PRStyle;
-        default: return ShastaStyle::DotSuffix;
+        case 0:  return AssemblerStyle::Classic;
+        case 1:  return AssemblerStyle::PRStyle;
+        case 2:  return AssemblerStyle::DotSuffix;
+        case 3:  return AssemblerStyle::HifiAsmStyle;
+        case 4:  return AssemblerStyle::VerkkoStyle;
+        default: return AssemblerStyle::DotSuffix;
     }
 }
 
 std::string BubbleDetector::base_name(const std::string& name,
-                                       ShastaStyle style) const {
+                                       AssemblerStyle style) const {
     switch (style) {
-        case ShastaStyle::Classic: {
-            // Strip trailing _NNN  (e.g. "000001F_003" → "000001F")
+        case AssemblerStyle::Classic: {
             auto pos = name.rfind('_');
             if (pos != std::string::npos) {
                 bool all_digits = true;
@@ -319,9 +473,8 @@ std::string BubbleDetector::base_name(const std::string& name,
             }
             return name;  // no suffix → this IS the primary
         }
-        case ShastaStyle::PRStyle:
-        case ShastaStyle::DotSuffix: {
-            // Strip trailing .N  (e.g. "PR.000001.1" → "PR.000001", "contig1.1" → "contig1")
+        case AssemblerStyle::PRStyle:
+        case AssemblerStyle::DotSuffix: {
             auto pos = name.rfind('.');
             if (pos != std::string::npos && pos + 1 < name.size()) {
                 bool all_digits = true;
@@ -332,14 +485,21 @@ std::string BubbleDetector::base_name(const std::string& name,
             }
             return {};  // doesn't match — skip this node
         }
+        case AssemblerStyle::HifiAsmStyle:
+            // TODO: Strip h1/h2 prefix (e.g. "h1tg000001l" → "tg000001l").
+
+            return {};
+        case AssemblerStyle::VerkkoStyle:
+            // TODO: Strip haplotype[12]- prefix (e.g. "haplotype1-0000001" → "0000001").
+ 
+            return {};
     }
     return {};
 }
 
 BubbleResult BubbleDetector::get_alts_from_shasta_names(const Graph& graph) const {
-    ShastaStyle style = detect_style(graph);
+    AssemblerStyle style = detect_style(graph);
 
-    // Group node IDs by base name.
     std::unordered_map<std::string, std::vector<uint32_t>> groups;
     for (uint32_t id = 0; id < graph.get_num_nodes(); ++id) {
         std::string base = base_name(graph.get_name(id), style);
@@ -349,7 +509,7 @@ BubbleResult BubbleDetector::get_alts_from_shasta_names(const Graph& graph) cons
 
     BubbleResult result;
     for (auto& [base, ids] : groups) {
-        if (ids.size() != 2) continue;  // only clean diploid pairs
+        if (ids.size() != 2) continue;  
 
         uint32_t a = ids[0], b = ids[1];
         result.phasing_nodes.insert(a);
