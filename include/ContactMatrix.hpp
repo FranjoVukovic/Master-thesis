@@ -31,12 +31,18 @@ public:
 
     void load_contacts(const std::string& filepath, const Graph& graph);
 
+
+    void add_contact(uint32_t u, uint32_t v, uint32_t weight = 1);
+
     void build_csr(size_t num_nodes);
 
-    // Remove all contacts involving nodes NOT in phasing_nodes.
-    // Call after build_csr(). Rebuilds the CSR in-place.
-    void filter_to_bubbles(const std::unordered_set<uint32_t>& phasing_nodes,
-                           size_t num_nodes);
+    void filter_to_phasing_nodes(const std::unordered_set<uint32_t>& phasing_nodes,
+                                 size_t num_nodes);
 
     uint32_t get_contact(uint32_t node_a, uint32_t node_b) const;
+
+    size_t   row_begin(uint32_t u)     const { return row_offsets[u];     }
+    size_t   row_end  (uint32_t u)     const { return row_offsets[u + 1]; }
+    uint32_t col_at   (size_t   idx)   const { return col_indices[idx];   }
+    uint32_t value_at (size_t   idx)   const { return values[idx];        }
 };

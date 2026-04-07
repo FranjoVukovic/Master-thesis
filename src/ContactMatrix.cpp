@@ -28,6 +28,11 @@ void ContactMatrix::load_contacts(const std::string& filepath, const Graph& grap
     }
 }
 
+void ContactMatrix::add_contact(uint32_t u, uint32_t v, uint32_t weight) {
+    if (u > v) std::swap(u, v);
+    contact_builder[{u, v}] += weight;
+}
+
 void ContactMatrix::build_csr(size_t num_nodes) {
     row_offsets.assign(num_nodes + 1, 0);
 
@@ -69,13 +74,11 @@ void ContactMatrix::build_csr(size_t num_nodes) {
 
     contact_builder.clear();
 
-    // Sort each row by column index so get_contact() can use binary search.
     for (size_t i = 0; i < num_nodes; ++i) {
         uint64_t row_start = row_offsets[i];
         uint64_t row_end   = row_offsets[i + 1];
         if (row_end - row_start <= 1) continue;
 
-        // Collect (col, val) pairs, sort by col, write back.
         std::vector<std::pair<uint32_t,uint32_t>> row_data;
         row_data.reserve(row_end - row_start);
         for (uint64_t j = row_start; j < row_end; ++j)
@@ -88,9 +91,8 @@ void ContactMatrix::build_csr(size_t num_nodes) {
     }
 }
 
-void ContactMatrix::filter_to_bubbles(const std::unordered_set<uint32_t>& phasing_nodes,
-                                      size_t num_nodes) {
-    // Rebuild the CSR keeping only (u, v) entries where both u and v are phasing nodes.
+void ContactMatrix::filter_to_phasing_nodes(const std::unordered_set<uint32_t>& phasing_nodes,
+                                             size_t num_nodes) {
     std::vector<uint64_t> new_offsets(num_nodes + 1, 0);
 
     for (size_t u = 0; u < num_nodes; ++u) {
