@@ -25,14 +25,21 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/lh3/yak.git
     GIT_TAG        v0.1
 )
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
 FetchContent_Populate(yak)
 
-add_library(yak_lib STATIC
-    ${yak_SOURCE_DIR}/count.c
-    ${yak_SOURCE_DIR}/kthread.c
-)
+file(GLOB YAK_SOURCES "${yak_SOURCE_DIR}/*.c")
+
+# Exclude main.c to avoid multiple 'main' definitions
+list(REMOVE_ITEM YAK_SOURCES "${yak_SOURCE_DIR}/main.c")
+
+add_library(yak_lib STATIC ${YAK_SOURCES})
+
 target_include_directories(yak_lib PUBLIC ${yak_SOURCE_DIR})
-# yak's count.c uses pthreads and zlib
+
+# yak's sources use pthreads and zlib
 find_package(Threads REQUIRED)
 target_link_libraries(yak_lib PUBLIC Threads::Threads z)
 
@@ -42,6 +49,7 @@ set(CORE_SOURCES
     src/BamParser.cpp
     src/TrioBinner.cpp
     src/BubbleDetector.cpp
+    src/Phaser.cpp
 )
 
 add_executable(MasterThesis src/main.cpp ${CORE_SOURCES})
@@ -57,7 +65,7 @@ enable_testing()
 FetchContent_Declare(
   googletest
   GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG release-1.12.1
+  GIT_TAG release-1.12.0
 )
 FetchContent_MakeAvailable(googletest)
 

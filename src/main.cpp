@@ -2,6 +2,7 @@
 #include "ContactMatrix.hpp"
 #include "BubbleDetector.hpp"
 #include "TrioBinner.hpp"
+#include "Phaser.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -107,12 +108,13 @@ int main(int argc, char* argv[]) {
         contacts.build_csr(graph.get_num_nodes());
         std::cout << "Built contact matrix.\n";
 
-        // --- Stage 1b (optional): trio binning ---
+        // --- Stage 1b (optional): trio binning — computed now, applied after bubble detection ---
+        std::vector<TrioScores> trio_scores;
         if (!pat_yak_path.empty()) {
             TrioBinner binner(pat_yak_path, mat_yak_path);
-            auto scores = binner.compute_scores(graph);
+            trio_scores = binner.compute_scores(graph);
             uint64_t total_pat = 0, total_mat = 0;
-            for (const auto& s : scores) { total_pat += s.pat_count; total_mat += s.mat_count; }
+            for (const auto& s : trio_scores) { total_pat += s.pat_count; total_mat += s.mat_count; }
             std::cout << "Trio binning: paternal k-mers = " << total_pat
                       << ", maternal = " << total_mat << "\n";
         }
@@ -137,8 +139,15 @@ int main(int argc, char* argv[]) {
                   << bubbles.phasing_nodes.size() << " phasing nodes, "
                   << bubbles.alt_map.size() / 2   << " bubble pairs\n";
 
-        contacts.filter_to_bubbles(bubbles.phasing_nodes, graph.get_num_nodes());
+        contacts.filter_to_phasing_nodes(bubbles.phasing_nodes, graph.get_num_nodes());
         std::cout << "Contact matrix filtered to bubble nodes.\n";
+
+        // --- Stage 2b (optional): lock trio-dominant phasing nodes ---
+        if (!trio_scores.empty()) {
+            size_t locked = apply_trio_constraints(graph, bubbles.phasing_nodes, trio_scores);
+            std::cout << "Trio constraints locked " << locked << " / "
+                      << bubbles.phasing_nodes.size() << " phasing nodes.\n";
+        }
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
