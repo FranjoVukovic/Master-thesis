@@ -30,6 +30,23 @@ if(POLICY CMP0169)
 endif()
 FetchContent_Populate(yak)
 
+# --- thread_pool ---
+find_package(thread_pool 4.0.0 QUIET)
+if (NOT thread_pool_FOUND)
+  FetchContent_Declare(
+    thread_pool
+    GIT_REPOSITORY https://github.com/rvaser/thread_pool
+    GIT_TAG        4.0.0)
+  FetchContent_GetProperties(thread_pool)
+  if (NOT thread_pool_POPULATED)
+    FetchContent_Populate(thread_pool)
+    add_subdirectory(
+      ${thread_pool_SOURCE_DIR}
+      ${thread_pool_BINARY_DIR}
+      EXCLUDE_FROM_ALL)
+  endif ()
+endif ()
+
 file(GLOB YAK_SOURCES "${yak_SOURCE_DIR}/*.c")
 
 # Exclude main.c to avoid multiple 'main' definitions
@@ -58,7 +75,7 @@ target_include_directories(MasterThesis PRIVATE
     ${htslib_SOURCE_DIR}
     ${yak_SOURCE_DIR}
 )
-target_link_libraries(MasterThesis PRIVATE hts yak_lib)
+target_link_libraries(MasterThesis PRIVATE hts yak_lib thread_pool::thread_pool)
 
 enable_testing()
 
@@ -76,7 +93,7 @@ target_include_directories(MasterThesis_Test PRIVATE
     ${yak_SOURCE_DIR}
 )
 
-target_link_libraries(MasterThesis_Test PRIVATE hts yak_lib gtest_main)
+target_link_libraries(MasterThesis_Test PRIVATE hts yak_lib thread_pool::thread_pool gtest_main)
 
 target_compile_definitions(MasterThesis_Test PRIVATE TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/test/data")
 target_compile_options(MasterThesis_Test PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)

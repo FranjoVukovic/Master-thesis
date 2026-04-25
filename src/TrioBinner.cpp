@@ -6,6 +6,7 @@ extern "C" {
 #include "yak.h"
 }
 
+#include <future>
 #include <stdexcept>
 #include <string>
 
@@ -59,17 +60,39 @@ TrioBinner::~TrioBinner() {
     if (mat_db_) yak_ch_destroy(static_cast<yak_ch_t*>(mat_db_));
 }
 
-std::vector<TrioScores> TrioBinner::compute_scores(const Graph& graph) const {
-    size_t n = graph.get_num_nodes();
+std::vector<TrioScores> TrioBinner::compute_scores(const Graph& graph,
+        std::shared_ptr<thread_pool::ThreadPool> pool) const {
+    const size_t n = graph.get_num_nodes();
     std::vector<TrioScores> scores(n);
 
-    for (size_t i = 0; i < n; ++i) {
-        const std::string& seq = graph.get_sequence(static_cast<uint32_t>(i));
-        if (seq.empty()) continue;
-
-        scores[i].pat_count = count_matching_kmers(seq, pat_db_);
-        scores[i].mat_count = count_matching_kmers(seq, mat_db_);
+    if (!pool) {
+        for (size_t i = 0; i < n; ++i) {
+            const std::string& seq = graph.get_sequence(static_cast<uint32_t>(i));
+            if (seq.empty()) continue;
+            scores[i].pat_count = count_matching_kmers(seq, pat_db_);
+            scores[i].mat_count = count_matching_kmers(seq, mat_db_);
+        }
+        return scores;
     }
+
+    const size_t num_threads = pool->num_threads();
+    const size_t chunk_size = std::max<size_t>(1, (n + num_threads - 1) / num_threads);
+    std::vector<std::future<void>> futures;
+
+    for (size_t start = 0; start < n; start += chunk_size) {
+        size_t end = std::min(start + chunk_size, n);
+        futures.emplace_back(pool->Submit(
+            [this, &graph, &scores](size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i) {
+                    const std::string& seq = graph.get_sequence(static_cast<uint32_t>(i));
+                    if (seq.empty()) continue;
+                    scores[i].pat_count = count_matching_kmers(seq, pat_db_);
+                    scores[i].mat_count = count_matching_kmers(seq, mat_db_);
+                }
+            },
+            start, end));
+    }
+    for (auto& f : futures) f.get();
 
     return scores;
 }

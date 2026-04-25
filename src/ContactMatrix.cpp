@@ -1,14 +1,16 @@
 #include "ContactMatrix.hpp"
 #include "Graph.hpp"
-#include "BamParser.hpp" 
+#include "BamParser.hpp"
 #include <algorithm>
+#include <future>
 #include <stdexcept>
 #include <iostream>
 
 ContactMatrix::ContactMatrix() = default;
 
-void ContactMatrix::load_contacts(const std::string& filepath, const Graph& graph) {
-    BamParser parser(filepath);
+void ContactMatrix::load_contacts(const std::string& filepath, const Graph& graph,
+                                   int num_threads) {
+    BamParser parser(filepath, num_threads);
     std::string name_a, name_b;
 
     while (parser.get_next_contact(name_a, name_b)) {
@@ -33,7 +35,8 @@ void ContactMatrix::add_contact(uint32_t u, uint32_t v, uint32_t weight) {
     contact_builder[{u, v}] += weight;
 }
 
-void ContactMatrix::build_csr(size_t num_nodes) {
+void ContactMatrix::build_csr(size_t num_nodes,
+                               std::shared_ptr<thread_pool::ThreadPool> pool) {
     row_offsets.assign(num_nodes + 1, 0);
 
     for (const auto& kv : contact_builder) {
@@ -74,20 +77,35 @@ void ContactMatrix::build_csr(size_t num_nodes) {
 
     contact_builder.clear();
 
-    for (size_t i = 0; i < num_nodes; ++i) {
-        uint64_t row_start = row_offsets[i];
-        uint64_t row_end   = row_offsets[i + 1];
-        if (row_end - row_start <= 1) continue;
+    auto sort_rows = [this](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            uint64_t row_start = row_offsets[i];
+            uint64_t row_end   = row_offsets[i + 1];
+            if (row_end - row_start <= 1) continue;
 
-        std::vector<std::pair<uint32_t,uint32_t>> row_data;
-        row_data.reserve(row_end - row_start);
-        for (uint64_t j = row_start; j < row_end; ++j)
-            row_data.push_back({col_indices[j], values[j]});
-        std::sort(row_data.begin(), row_data.end());
-        for (size_t j = 0; j < row_data.size(); ++j) {
-            col_indices[row_start + j] = row_data[j].first;
-            values[row_start + j]      = row_data[j].second;
+            std::vector<std::pair<uint32_t,uint32_t>> row_data;
+            row_data.reserve(row_end - row_start);
+            for (uint64_t j = row_start; j < row_end; ++j)
+                row_data.push_back({col_indices[j], values[j]});
+            std::sort(row_data.begin(), row_data.end());
+            for (size_t j = 0; j < row_data.size(); ++j) {
+                col_indices[row_start + j] = row_data[j].first;
+                values[row_start + j]      = row_data[j].second;
+            }
         }
+    };
+
+    if (!pool) {
+        sort_rows(0, num_nodes);
+    } else {
+        const size_t num_threads = pool->num_threads();
+        const size_t chunk_size = std::max<size_t>(1, (num_nodes + num_threads - 1) / num_threads);
+        std::vector<std::future<void>> futures;
+        for (size_t start = 0; start < num_nodes; start += chunk_size) {
+            size_t end = std::min(start + chunk_size, num_nodes);
+            futures.emplace_back(pool->Submit(sort_rows, start, end));
+        }
+        for (auto& f : futures) f.get();
     }
 }
 

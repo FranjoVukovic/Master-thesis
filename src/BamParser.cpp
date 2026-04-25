@@ -1,11 +1,14 @@
 #include "BamParser.hpp"
 #include <stdexcept>
 
-BamParser::BamParser(const std::string& filepath) {
+BamParser::BamParser(const std::string& filepath, int num_threads) {
     in_file.reset(sam_open(filepath.c_str(), "r"));
     if (!in_file) {
         throw std::runtime_error("Not possible to open BAM file: " + filepath);
     }
+
+    if (num_threads > 1)
+        hts_set_threads(in_file.get(), num_threads);
 
     header.reset(sam_hdr_read(in_file.get()));
     if (!header) {

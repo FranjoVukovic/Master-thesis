@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+#include <thread_pool/thread_pool.hpp>
 
 class Graph;
 
@@ -21,7 +23,8 @@ public:
     ~TrioBinner();
 
     // Returns one TrioScores per node (indexed by node ID).
-    std::vector<TrioScores> compute_scores(const Graph& graph) const;
+    std::vector<TrioScores> compute_scores(const Graph& graph,
+        std::shared_ptr<thread_pool::ThreadPool> pool = nullptr) const;
 
 private:
     void* pat_db_;  // yak_ch_t* — paternal k-mer database

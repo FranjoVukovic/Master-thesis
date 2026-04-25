@@ -4,8 +4,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
+#include <thread_pool/thread_pool.hpp>
 
 class Graph;
 
@@ -29,12 +31,13 @@ private:
 public:
     ContactMatrix();
 
-    void load_contacts(const std::string& filepath, const Graph& graph);
-
+    void load_contacts(const std::string& filepath, const Graph& graph,
+                       int num_threads = 1);
 
     void add_contact(uint32_t u, uint32_t v, uint32_t weight = 1);
 
-    void build_csr(size_t num_nodes);
+    void build_csr(size_t num_nodes,
+                   std::shared_ptr<thread_pool::ThreadPool> pool = nullptr);
 
     void filter_to_phasing_nodes(const std::unordered_set<uint32_t>& phasing_nodes,
                                  size_t num_nodes);

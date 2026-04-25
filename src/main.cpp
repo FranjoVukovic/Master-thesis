@@ -5,8 +5,10 @@
 #include "Phaser.hpp"
 
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread_pool/thread_pool.hpp>
 
 namespace {
 void print_usage(const char* program_name) {
@@ -26,6 +28,7 @@ void print_usage(const char* program_name) {
         << "      --kmer-size        <int>            k-mer size for MinHash (default: 16)\n"
         << "      --sketch-size      <int>            MinHash sketch size (default: 1000)\n"
         << "      --jaccard-threshold <float>         MinHash Jaccard threshold (default: 0.2)\n"
+        << "  -t, --threads          <int>            Number of threads (default: 4)\n"
         << "  -h, --help                              Show this message\n";
 }
 } // namespace
@@ -40,6 +43,7 @@ int main(int argc, char* argv[]) {
     int         kmer_size         = 16;
     int         sketch_size       = 1000;
     double      jaccard_threshold = 0.2;
+    int         num_threads       = 4;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -72,6 +76,7 @@ int main(int argc, char* argv[]) {
             }
             continue;
         }
+        if (arg == "-t" || arg == "--threads") { num_threads = std::stoi(require_next(arg)); continue; }
         if (arg == "--kmer-size")          { kmer_size         = std::stoi(require_next(arg)); continue; }
         if (arg == "--sketch-size")        { sketch_size       = std::stoi(require_next(arg)); continue; }
         if (arg == "--jaccard-threshold")  { jaccard_threshold = std::stod(require_next(arg)); continue; }
@@ -91,6 +96,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    auto thread_pool = std::make_shared<thread_pool::ThreadPool>(num_threads);
+
     try {
         // --- Stage 1: parse graph ---
         Graph graph;
@@ -104,15 +111,15 @@ int main(int argc, char* argv[]) {
 
         // --- Stage 1: build contact matrix ---
         ContactMatrix contacts;
-        contacts.load_contacts(bam_path, graph);
-        contacts.build_csr(graph.get_num_nodes());
+        contacts.load_contacts(bam_path, graph, num_threads);
+        contacts.build_csr(graph.get_num_nodes(), thread_pool);
         std::cout << "Built contact matrix.\n";
 
         // --- Stage 1b (optional): trio binning — computed now, applied after bubble detection ---
         std::vector<TrioScores> trio_scores;
         if (!pat_yak_path.empty()) {
             TrioBinner binner(pat_yak_path, mat_yak_path);
-            trio_scores = binner.compute_scores(graph);
+            trio_scores = binner.compute_scores(graph, thread_pool);
             uint64_t total_pat = 0, total_mat = 0;
             for (const auto& s : trio_scores) { total_pat += s.pat_count; total_mat += s.mat_count; }
             std::cout << "Trio binning: paternal k-mers = " << total_pat
@@ -133,7 +140,7 @@ int main(int argc, char* argv[]) {
         BubbleDetector detector;
         BubbleResult bubbles = (bubble_mode == "shasta")
             ? detector.get_alts_from_shasta_names(graph)
-            : detector.find_unlabeled_alts(graph, kmer_size, sketch_size, jaccard_threshold);
+            : detector.find_unlabeled_alts(graph, kmer_size, sketch_size, jaccard_threshold, thread_pool);
 
         std::cout << "Bubble detection (" << bubble_mode << "): "
                   << bubbles.phasing_nodes.size() << " phasing nodes, "

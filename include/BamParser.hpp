@@ -21,7 +21,7 @@ private:
     std::unique_ptr<bam1_t, Bam1Deleter> record;
 
 public:
-    explicit BamParser(const std::string& filepath);
+    explicit BamParser(const std::string& filepath, int num_threads = 1);
 
     bool get_next_contact(std::string& contig_a, std::string& contig_b);
 };

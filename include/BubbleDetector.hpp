@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <thread_pool/thread_pool.hpp>
 
 class Graph;
 
@@ -20,7 +22,8 @@ public:
     BubbleResult find_unlabeled_alts(const Graph& graph,
                                      int    k                 = 16,
                                      int    sketch_size       = 1000,
-                                     double jaccard_threshold = 0.2) const;
+                                     double jaccard_threshold = 0.2,
+                                     std::shared_ptr<thread_pool::ThreadPool> pool = nullptr) const;
 
 private:
     struct Bubble {
