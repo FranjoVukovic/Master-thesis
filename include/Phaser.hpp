@@ -1,38 +1,35 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <unordered_set>
 #include <vector>
 
-#include "TrioBinner.hpp"   // TrioScores
+#include <thread_pool/thread_pool.hpp>
+
+#include "BubbleDetector.hpp"   // BubbleResult
+#include "TrioBinner.hpp"       // TrioScores
 
 class Graph;
 class ContactMatrix;
 
-// ============================================================
-// Trio-constrained initialization (data preparation stage).
-//
-// apply_trio_constraints():
-//   For every node in phasing_nodes, inspects its TrioScores and — when one
-//   parent's k-mer count dominates by >= lock_ratio of the total matched
-//   k-mers — calls graph.lock_phase(id, 0 or 1).  Pat-dominant → phase 0,
-//   mat-dominant → phase 1.  Ambiguous or zero-score nodes are left with
-//   phase = -1 and is_phase_locked = false for a later phasing stage.
-//   Returns the number of nodes that got locked.
-// ============================================================
-
 struct PhaserConfig {
-    // Fraction of total matched (pat + mat) k-mers that one parent must
-    // contribute to lock a node's phase.  0.8 = 80% as the brief specifies.
-    double   lock_ratio = 0.8;
-    // Minimum total matched k-mers before we consider a node lockable — below
-    // this, any ratio is statistical noise.
+    int      core_iterations = 200;
+    int      sample_size     = 30;
+    int      n_rounds        = 2;
+    double   merge_threshold = 0.80;
+    double   lock_ratio      = 0.80;
     uint32_t min_total_kmers = 1;
+    uint32_t rng_seed        = 42;
 };
 
-// Applies trio binning constraints in-place on `graph`. Only nodes present
-// in `phasing_nodes` are considered; returns how many got locked.
 size_t apply_trio_constraints(Graph& graph,
                                const std::unordered_set<uint32_t>& phasing_nodes,
                                const std::vector<TrioScores>&      scores,
                                const PhaserConfig&                 cfg = {});
+
+void monte_carlo_phase(Graph&                                   graph,
+                       const ContactMatrix&                     contacts,
+                       const BubbleResult&                      bubbles,
+                       const PhaserConfig&                      cfg,
+                       std::shared_ptr<thread_pool::ThreadPool> pool);

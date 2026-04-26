@@ -52,6 +52,7 @@ public:
 
     int8_t get_phase       (uint32_t id) const { return node_info[id].phase; }
     bool   is_phase_locked (uint32_t id) const { return node_info[id].is_phase_locked; }
+    bool   is_locked       (uint32_t id) const { return node_info[id].is_phase_locked; }
     void   set_phase       (uint32_t id, int8_t phase)   { node_info[id].phase = phase; }
     void   lock_phase      (uint32_t id, int8_t phase)   {
         node_info[id].phase           = phase;

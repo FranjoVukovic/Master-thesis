@@ -4,6 +4,7 @@
 #include "TrioBinner.hpp"
 #include "Phaser.hpp"
 
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -155,6 +156,20 @@ int main(int argc, char* argv[]) {
             std::cout << "Trio constraints locked " << locked << " / "
                       << bubbles.phasing_nodes.size() << " phasing nodes.\n";
         }
+
+        // --- Stage 3: Monte Carlo phasing ---
+        monte_carlo_phase(graph, contacts, bubbles, PhaserConfig{}, thread_pool);
+        std::cout << "Monte Carlo phasing complete.\n";
+
+        // --- Stage 5: write phase labels CSV ---
+        std::ofstream out("phase_labels.csv");
+        out << "contig_id,phase\n";
+        for (uint32_t id = 0; id < graph.get_num_nodes(); ++id) {
+            int ph = graph.get_phase(id);
+            if (ph == -1) continue;
+            out << graph.get_name(id) << "," << ph << "\n";
+        }
+        std::cout << "Wrote phase_labels.csv\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
