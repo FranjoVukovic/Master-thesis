@@ -38,6 +38,9 @@ S	star_A	*
 S	star_B	*
 S	star_snk	*
 S	bb_end	ACGTACGTACGTACGT
+S	tail_src	ACGTACGTACGTACGT
+S	tail_A	ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT
+S	tail_B	ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGA
 S	PR.000001.0	ACGT
 S	PR.000001.1	ACGT
 S	contig1.0	ACGT
@@ -96,3 +99,6 @@ L	star_src	+	star_B	+	0M
 L	star_A	+	star_snk	+	0M
 L	star_B	+	star_snk	+	0M
 L	star_snk	+	bb_end	+	0M
+L	bb_end	+	tail_src	+	0M
+L	tail_src	+	tail_A	+	0M
+L	tail_src	+	tail_B	+	0M

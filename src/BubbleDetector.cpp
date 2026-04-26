@@ -424,42 +424,99 @@ BubbleResult BubbleDetector::find_unlabeled_alts(const Graph& graph,
             for (uint32_t v : b.branch_a) { result.phasing_nodes.insert(v); result.alt_map[v] = rep_b; }
             for (uint32_t v : b.branch_b) { result.phasing_nodes.insert(v); result.alt_map[v] = rep_a; }
         }
-        return result;
-    }
+    } else {
+        const size_t num_threads = pool->num_threads();
+        const size_t chunk_size = std::max<size_t>(1, (two_branch_indices.size() + num_threads - 1) / num_threads);
+        std::vector<std::future<BubbleResult>> futures;
 
-    // Parallel path: submit sketch+jaccard per chunk, each returns a thread-local BubbleResult
-    const size_t num_threads = pool->num_threads();
-    const size_t chunk_size = std::max<size_t>(1, (two_branch_indices.size() + num_threads - 1) / num_threads);
-    std::vector<std::future<BubbleResult>> futures;
-
-    for (size_t start = 0; start < two_branch_indices.size(); start += chunk_size) {
-        size_t end = std::min(start + chunk_size, two_branch_indices.size());
-        futures.emplace_back(pool->Submit(
-            [this, &graph, &bubbles, &two_branch_indices, k, sketch_size, jaccard_threshold]
-            (size_t begin, size_t end) {
-                BubbleResult local;
-                for (size_t ci = begin; ci < end; ++ci) {
-                    const Bubble& b = bubbles[two_branch_indices[ci]];
-                    std::string seq_a = branch_sequence(b.branch_a, graph);
-                    std::string seq_b = branch_sequence(b.branch_b, graph);
-                    if (!seq_a.empty() && !seq_b.empty()) {
-                        double jac = estimate_jaccard(compute_sketch(seq_a, k, sketch_size),
-                                                      compute_sketch(seq_b, k, sketch_size));
-                        if (jac < jaccard_threshold) continue;
+        for (size_t start = 0; start < two_branch_indices.size(); start += chunk_size) {
+            size_t end = std::min(start + chunk_size, two_branch_indices.size());
+            futures.emplace_back(pool->Submit(
+                [this, &graph, &bubbles, &two_branch_indices, k, sketch_size, jaccard_threshold]
+                (size_t begin, size_t end) {
+                    BubbleResult local;
+                    for (size_t ci = begin; ci < end; ++ci) {
+                        const Bubble& b = bubbles[two_branch_indices[ci]];
+                        std::string seq_a = branch_sequence(b.branch_a, graph);
+                        std::string seq_b = branch_sequence(b.branch_b, graph);
+                        if (!seq_a.empty() && !seq_b.empty()) {
+                            double jac = estimate_jaccard(compute_sketch(seq_a, k, sketch_size),
+                                                          compute_sketch(seq_b, k, sketch_size));
+                            if (jac < jaccard_threshold) continue;
+                        }
+                        uint32_t rep_a = b.branch_a[0], rep_b = b.branch_b[0];
+                        for (uint32_t v : b.branch_a) { local.phasing_nodes.insert(v); local.alt_map[v] = rep_b; }
+                        for (uint32_t v : b.branch_b) { local.phasing_nodes.insert(v); local.alt_map[v] = rep_a; }
                     }
-                    uint32_t rep_a = b.branch_a[0], rep_b = b.branch_b[0];
-                    for (uint32_t v : b.branch_a) { local.phasing_nodes.insert(v); local.alt_map[v] = rep_b; }
-                    for (uint32_t v : b.branch_b) { local.phasing_nodes.insert(v); local.alt_map[v] = rep_a; }
-                }
-                return local;
-            },
-            start, end));
+                    return local;
+                },
+                start, end));
+        }
+
+        for (auto& f : futures) {
+            BubbleResult local = f.get();
+            result.phasing_nodes.insert(local.phasing_nodes.begin(), local.phasing_nodes.end());
+            result.alt_map.insert(local.alt_map.begin(), local.alt_map.end());
+        }
     }
 
-    for (auto& f : futures) {
-        BubbleResult local = f.get();
-        result.phasing_nodes.insert(local.phasing_nodes.begin(), local.phasing_nodes.end());
-        result.alt_map.insert(local.alt_map.begin(), local.alt_map.end());
+    // Sibling-MinHash pass: find alts among non-phased nodes using shared parents/successors.
+    const uint32_t n_phys = static_cast<uint32_t>(graph.get_num_nodes());
+    std::vector<std::vector<uint32_t>> out_phys(n_phys), in_phys(n_phys);
+    for (uint32_t u = 0; u < n_phys; ++u) {
+        auto [beg, end] = graph.get_neighbors(u);
+        for (auto it = beg; it != end; ++it) {
+            if (!it->source_rev && !it->target_rev) {
+                out_phys[u].push_back(it->target_id);
+                in_phys[it->target_id].push_back(u);
+            }
+        }
+    }
+
+    std::unordered_map<uint32_t, std::vector<uint64_t>> sketches;
+    for (uint32_t u = 0; u < n_phys; ++u) {
+        if (result.phasing_nodes.count(u)) continue;
+        const std::string& seq = graph.get_sequence(u);
+        if (static_cast<int>(seq.size()) < k) continue;
+        auto sk = compute_sketch(seq, k, sketch_size);
+        if (!sk.empty()) sketches.emplace(u, std::move(sk));
+    }
+
+    std::unordered_map<uint32_t, std::pair<uint32_t, double>> best;
+    for (const auto& kv : sketches) {
+        const uint32_t u = kv.first;
+        const auto& sk_u = kv.second;
+
+        std::unordered_set<uint32_t> siblings;
+        for (uint32_t p : in_phys[u])
+            for (uint32_t c : out_phys[p])
+                if (c != u) siblings.insert(c);
+        for (uint32_t s : out_phys[u])
+            for (uint32_t pp : in_phys[s])
+                if (pp != u) siblings.insert(pp);
+
+        uint32_t best_v = u;
+        double   best_j = -1.0;
+        for (uint32_t v : siblings) {
+            auto it = sketches.find(v);
+            if (it == sketches.end()) continue;
+            double j = estimate_jaccard(sk_u, it->second);
+            if (j >= jaccard_threshold && j > best_j) { best_j = j; best_v = v; }
+        }
+        if (best_v != u) best[u] = {best_v, best_j};
+    }
+
+    for (const auto& kv : best) {
+        const uint32_t u = kv.first;
+        const uint32_t v = kv.second.first;
+        if (u >= v) continue;
+        auto it = best.find(v);
+        if (it != best.end() && it->second.first == u) {
+            result.phasing_nodes.insert(u);
+            result.phasing_nodes.insert(v);
+            result.alt_map[u] = v;
+            result.alt_map[v] = u;
+        }
     }
 
     return result;

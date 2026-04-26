@@ -9,12 +9,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <iostream>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread_pool/thread_pool.hpp>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 class UnifiedTest : public ::testing::Test {
@@ -160,6 +163,16 @@ TEST_F(UnifiedBubbleTest, StarSequenceBubbleStillRecorded) {
     EXPECT_EQ(r.alt_map.at(star_B), star_A);
 }
 
+TEST_F(UnifiedBubbleTest, TailBubbleAtGraphEnd) {
+    const uint32_t tail_A = graph.get_id("tail_A");
+    const uint32_t tail_B = graph.get_id("tail_B");
+
+    EXPECT_EQ(r.phasing_nodes.count(tail_A), 1u);
+    EXPECT_EQ(r.phasing_nodes.count(tail_B), 1u);
+    EXPECT_EQ(r.alt_map.at(tail_A), tail_B);
+    EXPECT_EQ(r.alt_map.at(tail_B), tail_A);
+}
+
 TEST_F(UnifiedBubbleTest, LinearChainNotPhased) {
     for (const char* name : {"lc_a", "lc_b", "lc_c", "lc_d"}) {
         EXPECT_EQ(r.phasing_nodes.count(graph.get_id(name)), 0u)
@@ -176,14 +189,34 @@ TEST_F(UnifiedBubbleTest, StructuralNodesNotPhased) {
             "nb_src",   "nb_snk",
             "sim_src",  "sim_snk",
             "dis_src",  "dis_snk",
-            "star_src", "star_snk"}) {
+            "star_src", "star_snk",
+            "tail_src"}) {
         EXPECT_EQ(r.phasing_nodes.count(graph.get_id(name)), 0u)
             << name << " should not be a phasing node";
     }
 }
 
 TEST_F(UnifiedBubbleTest, PhasingNodeCount) {
-    EXPECT_EQ(r.phasing_nodes.size(), 20u);
+    EXPECT_EQ(r.phasing_nodes.size(), 22u);
+}
+
+TEST_F(UnifiedBubbleTest, DumpAltPairs) {
+    std::set<std::pair<std::string, std::string>> pairs;
+    for (const auto& kv : r.alt_map) {
+        const std::string a = graph.get_name(kv.first);
+        const std::string b = graph.get_name(kv.second);
+        pairs.insert(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
+    }
+    std::cout << "[alt pairs: " << pairs.size() << "]\n";
+    for (const auto& p : pairs) {
+        std::cout << "  " << p.first << " <-> " << p.second << "\n";
+    }
+    std::cout << "[unpaired phasing nodes]\n";
+    for (uint32_t id : r.phasing_nodes) {
+        if (!r.alt_map.count(id)) {
+            std::cout << "  " << graph.get_name(id) << "\n";
+        }
+    }
 }
 
 TEST_F(UnifiedTest, MinHashFiltersDissimilarBranches) {
@@ -376,7 +409,7 @@ void setup_pipeline(Pipeline& p) {
 TEST(PhaserT01_Graph, LoadingAndAccessors) {
     Graph g;
     ASSERT_NO_THROW(g.load_from_gfa(kGfaPath));
-    EXPECT_EQ(g.get_num_nodes(), 50u);
+    EXPECT_EQ(g.get_num_nodes(), 53u);
 
     EXPECT_NO_THROW((void) g.get_id("snp_A"));
     EXPECT_EQ(g.get_name(g.get_id("snp_A")), "snp_A");
@@ -627,6 +660,11 @@ TEST(PhaserT08_MC, TrioLockedPreserved) {
     if (dA_total == 0 || dB_total == 0) {
         GTEST_SKIP() << "yak DBs produce zero counts on this graph (k-mer mismatch)";
     }
+
+    p.bubbles.phasing_nodes.insert(dis_A);
+    p.bubbles.phasing_nodes.insert(dis_B);
+    p.bubbles.alt_map[dis_A] = dis_B;
+    p.bubbles.alt_map[dis_B] = dis_A;
 
     PhaserConfig cfg;
     cfg.lock_ratio      = 0.90;
