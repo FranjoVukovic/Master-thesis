@@ -51,6 +51,8 @@ public:
     size_t get_num_nodes() const;
 
     int8_t get_phase       (uint32_t id) const { return node_info[id].phase; }
+    uint32_t get_length    (uint32_t id) const { return node_info[id].length; }
+    uint32_t get_coverage  (uint32_t id) const { return node_info[id].coverage; }
     bool   is_phase_locked (uint32_t id) const { return node_info[id].is_phase_locked; }
     bool   is_locked       (uint32_t id) const { return node_info[id].is_phase_locked; }
     void   set_phase       (uint32_t id, int8_t phase)   { node_info[id].phase = phase; }

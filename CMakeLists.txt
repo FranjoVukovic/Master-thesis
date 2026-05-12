@@ -67,6 +67,10 @@ set(CORE_SOURCES
     src/TrioBinner.cpp
     src/BubbleDetector.cpp
     src/Phaser.cpp
+    src/Chainer.cpp
+    src/HamiltonianChainer.cpp
+    src/UnzippedGraph.cpp
+    src/ResultWriter.cpp
 )
 
 add_executable(MasterThesis src/main.cpp ${CORE_SOURCES})

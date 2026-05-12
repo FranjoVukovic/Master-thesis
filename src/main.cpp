@@ -3,7 +3,12 @@
 #include "BubbleDetector.hpp"
 #include "TrioBinner.hpp"
 #include "Phaser.hpp"
+#include "Chainer.hpp"
+#include "HamiltonianChainer.hpp"
+#include "UnzippedGraph.hpp"
+#include "ResultWriter.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -30,6 +35,9 @@ void print_usage(const char* program_name) {
         << "      --sketch-size      <int>            MinHash sketch size (default: 1000)\n"
         << "      --jaccard-threshold <float>         MinHash Jaccard threshold (default: 0.2)\n"
         << "  -t, --threads          <int>            Number of threads (default: 4)\n"
+        << "      --out-dir          <path>           Output directory (default: \".\")\n"
+        << "      --prefix           <name>           Output filename prefix (default: GFA basename)\n"
+        << "      --hamiltonian                       Use HamiltonianChainer instead of greedy\n"
         << "  -h, --help                              Show this message\n";
 }
 } // namespace
@@ -45,6 +53,9 @@ int main(int argc, char* argv[]) {
     int         sketch_size       = 1000;
     double      jaccard_threshold = 0.2;
     int         num_threads       = 4;
+    std::string out_dir           = ".";
+    std::string prefix;
+    bool        use_hamiltonian   = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -81,6 +92,9 @@ int main(int argc, char* argv[]) {
         if (arg == "--kmer-size")          { kmer_size         = std::stoi(require_next(arg)); continue; }
         if (arg == "--sketch-size")        { sketch_size       = std::stoi(require_next(arg)); continue; }
         if (arg == "--jaccard-threshold")  { jaccard_threshold = std::stod(require_next(arg)); continue; }
+        if (arg == "--out-dir")            { out_dir           = require_next(arg); continue; }
+        if (arg == "--prefix")             { prefix            = require_next(arg); continue; }
+        if (arg == "--hamiltonian")        { use_hamiltonian   = true;  continue; }
 
         std::cerr << "Unknown argument: " << arg << "\n";
         print_usage(argv[0]);
@@ -161,15 +175,29 @@ int main(int argc, char* argv[]) {
         monte_carlo_phase(graph, contacts, bubbles, PhaserConfig{}, thread_pool);
         std::cout << "Monte Carlo phasing complete.\n";
 
-        // --- Stage 5: write phase labels CSV ---
-        std::ofstream out("phase_labels.csv");
-        out << "contig_id,phase\n";
-        for (uint32_t id = 0; id < graph.get_num_nodes(); ++id) {
-            int ph = graph.get_phase(id);
-            if (ph == -1) continue;
-            out << graph.get_name(id) << "," << ph << "\n";
+        // --- Stage 4: chaining + unzipping ---
+        ChainResult chains = use_hamiltonian
+            ? HamiltonianChainer(thread_pool).generate_chain_paths(graph, bubbles, contacts)
+            : Chainer().generate_chain_paths(graph, bubbles, &contacts);
+        std::cout << "Chained: ph0=" << chains.phase_0.size()
+                  << " ph1=" << chains.phase_1.size()
+                  << " unphased=" << chains.unphased.size() << "\n";
+
+        UnzippedGraph uz = UnzippedGraph::build(graph, bubbles, chains);
+        std::cout << "Unzipped graph: " << uz.segments().size() << " segments, "
+                  << uz.links().size() << " links\n";
+
+        // --- Stage 5: serialize results ---
+        if (prefix.empty()) {
+            prefix = std::filesystem::path(gfa_path).stem().string();
+            if (prefix.empty()) prefix = "out";
         }
-        std::cout << "Wrote phase_labels.csv\n";
+        OutputConfig out_cfg{out_dir, prefix};
+        ResultWriter writer(thread_pool);
+        writer.write_chained_gfa (graph, chains, out_cfg);
+        writer.write_unzipped_gfa(graph, uz,     out_cfg);
+        writer.write_fastas      (graph, uz,     out_cfg);
+        std::cout << "Wrote results under " << out_dir << " with prefix '" << prefix << "'\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";

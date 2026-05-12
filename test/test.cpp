@@ -868,3 +868,235 @@ TEST(PhaserT14_CSV, OutputContent) {
     EXPECT_EQ(rows.count("uniquenode"), 0u);
 }
 
+// ============================================================
+// Stage 4 + 5: Chainer / UnzippedGraph / ResultWriter
+// ============================================================
+
+#include "Chainer.hpp"
+#include "HamiltonianChainer.hpp"
+#include "UnzippedGraph.hpp"
+#include "ResultWriter.hpp"
+
+namespace stage45 {
+
+const std::string kGfa = std::string(TEST_DATA_DIR) + "/test_unified.gfa";
+
+// Build a minimal phased state by hand on the test GFA: assign one side of the
+// SNP bubble phase 0 and the other phase 1. Use shasta-name bubbles for stability.
+struct Phased {
+    Graph        graph;
+    BubbleResult bubbles;
+};
+
+Phased make_phased() {
+    Phased p;
+    p.graph.load_from_gfa(kGfa);
+    BubbleDetector det;
+    p.bubbles = det.find_unlabeled_alts(p.graph, 16, 1000, 0.2, nullptr);
+
+    // Deterministically phase each detected pair: lower-id → 0, higher → 1.
+    std::unordered_set<uint32_t> done;
+    for (const auto& kv : p.bubbles.alt_map) {
+        uint32_t a = kv.first, b = kv.second;
+        if (a > b) std::swap(a, b);
+        if (!done.insert(a).second) continue;
+        p.graph.lock_phase(a, 0);
+        p.graph.lock_phase(b, 1);
+    }
+    return p;
+}
+
+TEST(ChainerTest, HomozygousIncludedInBothPhaseChains) {
+    Phased p = make_phased();
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+
+    auto contains = [&](const std::vector<Chain>& cs, const std::string& nm) {
+        const uint32_t id = p.graph.get_id(nm);
+        for (const auto& c : cs)
+            for (uint32_t n : c.nodes) if (n == id) return true;
+        return false;
+    };
+    EXPECT_TRUE(contains(r.phase_0, "lc_a"));
+    EXPECT_TRUE(contains(r.phase_1, "lc_a"));
+    EXPECT_TRUE(contains(r.phase_0, "bb_start"));
+    EXPECT_TRUE(contains(r.phase_1, "bb_start"));
+}
+
+TEST(ChainerTest, SnpBubbleSplitsPhases) {
+    Phased p = make_phased();
+    const uint32_t snp_A = p.graph.get_id("snp_A");
+    const uint32_t snp_B = p.graph.get_id("snp_B");
+    ASSERT_NE(p.graph.get_phase(snp_A), p.graph.get_phase(snp_B));
+    const int8_t a_phase = p.graph.get_phase(snp_A);
+
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+
+    auto has = [&](const std::vector<Chain>& cs, uint32_t id) {
+        for (const auto& c : cs)
+            for (uint32_t n : c.nodes) if (n == id) return true;
+        return false;
+    };
+    const auto& a_chains = (a_phase == 0) ? r.phase_0 : r.phase_1;
+    const auto& b_chains = (a_phase == 0) ? r.phase_1 : r.phase_0;
+    EXPECT_TRUE (has(a_chains, snp_A));
+    EXPECT_FALSE(has(a_chains, snp_B));
+    EXPECT_TRUE (has(b_chains, snp_B));
+    EXPECT_FALSE(has(b_chains, snp_A));
+}
+
+TEST(UnzipTest, HomozygousDuplicated) {
+    Phased p = make_phased();
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+    UnzippedGraph uz = UnzippedGraph::build(p.graph, p.bubbles, r);
+
+    bool ph0 = false, ph1 = false;
+    for (const auto& s : uz.segments()) {
+        if (s.name == "bb_start_ph0") ph0 = true;
+        if (s.name == "bb_start_ph1") ph1 = true;
+    }
+    EXPECT_TRUE(ph0);
+    EXPECT_TRUE(ph1);
+}
+
+TEST(UnzipTest, NoCrossPhaseLeak) {
+    Phased p = make_phased();
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+    UnzippedGraph uz = UnzippedGraph::build(p.graph, p.bubbles, r);
+
+    for (const auto& l : uz.links()) {
+        const auto& s = uz.segments()[l.source_idx];
+        const auto& t = uz.segments()[l.target_idx];
+        EXPECT_EQ(s.phase, t.phase) << "link leak: " << s.name << " -> " << t.name;
+    }
+}
+
+TEST(UnzipTest, PhasedNodeKeepsOriginalName) {
+    Phased p = make_phased();
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+    UnzippedGraph uz = UnzippedGraph::build(p.graph, p.bubbles, r);
+
+    bool snp_A_plain = false;
+    for (const auto& s : uz.segments()) {
+        if (s.name == "snp_A") { snp_A_plain = true; break; }
+        EXPECT_NE(s.name, "snp_A_ph0");
+        EXPECT_NE(s.name, "snp_A_ph1");
+    }
+    EXPECT_TRUE(snp_A_plain);
+}
+
+TEST(ResultWriterTest, FastaPartitionCounts) {
+    Phased p = make_phased();
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+    UnzippedGraph uz = UnzippedGraph::build(p.graph, p.bubbles, r);
+
+    OutputConfig cfg;
+    cfg.out_dir = std::string(TEST_DATA_DIR);
+    cfg.prefix  = "stage45_test";
+
+    ResultWriter w;
+    w.write_fastas(p.graph, uz, cfg);
+
+    auto count_records = [](const std::string& path) {
+        std::ifstream in(path);
+        EXPECT_TRUE(in.good()) << path;
+        std::string line; size_t n = 0;
+        while (std::getline(in, line)) if (!line.empty() && line[0] == '>') ++n;
+        return n;
+    };
+    const std::string p0 = cfg.out_dir + "/" + cfg.prefix + ".phase_0.fasta";
+    const std::string p1 = cfg.out_dir + "/" + cfg.prefix + ".phase_1.fasta";
+    const std::string pu = cfg.out_dir + "/" + cfg.prefix + ".unphased.fasta";
+
+    size_t exp0 = 0, exp1 = 0, expu = 0;
+    for (const auto& s : uz.segments()) {
+        if (s.phase == 0) ++exp0;
+        else if (s.phase == 1) ++exp1;
+        else ++expu;
+    }
+    EXPECT_EQ(count_records(p0), exp0);
+    EXPECT_EQ(count_records(p1), exp1);
+    EXPECT_EQ(count_records(pu), expu);
+
+    std::remove(p0.c_str());
+    std::remove(p1.c_str());
+    std::remove(pu.c_str());
+}
+
+TEST(ResultWriterTest, UnzippedGfaRoundtrip) {
+    Phased p = make_phased();
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+    UnzippedGraph uz = UnzippedGraph::build(p.graph, p.bubbles, r);
+
+    OutputConfig cfg;
+    cfg.out_dir = std::string(TEST_DATA_DIR);
+    cfg.prefix  = "stage45_test";
+    ResultWriter w;
+    w.write_unzipped_gfa(p.graph, uz, cfg);
+
+    const std::string path = cfg.out_dir + "/" + cfg.prefix + ".unzipped.gfa";
+    Graph reloaded;
+    ASSERT_NO_THROW(reloaded.load_from_gfa(path));
+    EXPECT_EQ(reloaded.get_num_nodes(), uz.segments().size());
+    std::remove(path.c_str());
+}
+
+TEST(ResultWriterTest, ChainedGfaWritten) {
+    Phased p = make_phased();
+    Chainer ch;
+    ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
+
+    OutputConfig cfg;
+    cfg.out_dir = std::string(TEST_DATA_DIR);
+    cfg.prefix  = "stage45_test";
+    ResultWriter w;
+    w.write_chained_gfa(p.graph, r, cfg);
+
+    const std::string path = cfg.out_dir + "/" + cfg.prefix + ".chained.gfa";
+    std::ifstream in(path);
+    ASSERT_TRUE(in.good());
+    size_t s_count = 0, l_count = 0, pth_count = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        if (line[0] == 'S') ++s_count;
+        else if (line[0] == 'L') ++l_count;
+        else if (line[0] == 'P') ++pth_count;
+    }
+    EXPECT_EQ(s_count, p.graph.get_num_nodes());
+    EXPECT_GT(l_count, 0u);
+    EXPECT_GT(pth_count, 0u);
+    std::remove(path.c_str());
+}
+
+TEST(HamiltonianChainerTest, LinearGraphMatchesGreedy) {
+    Phased p = make_phased();
+    ContactMatrix contacts;
+    contacts.load_contacts(std::string(TEST_DATA_DIR) + "/test_unified.bam", p.graph, 1);
+    contacts.build_csr(p.graph.get_num_nodes(), nullptr);
+    contacts.filter_to_phasing_nodes(p.bubbles.phasing_nodes, p.graph.get_num_nodes());
+
+    auto pool = std::make_shared<thread_pool::ThreadPool>(2);
+    HamiltonianChainer ham(pool);
+    ChainResult r_ham = ham.generate_chain_paths(p.graph, p.bubbles, contacts);
+
+    Chainer ch;
+    ChainResult r_gr = ch.generate_chain_paths(p.graph, p.bubbles, &contacts);
+
+    auto total_visited = [](const ChainResult& r) {
+        size_t n = 0;
+        for (const auto& c : r.phase_0)  n += c.nodes.size();
+        for (const auto& c : r.phase_1)  n += c.nodes.size();
+        return n;
+    };
+    EXPECT_EQ(total_visited(r_ham), total_visited(r_gr));
+}
+
+} // namespace stage45
+
