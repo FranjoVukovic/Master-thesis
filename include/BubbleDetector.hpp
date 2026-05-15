@@ -25,6 +25,13 @@ public:
                                      double jaccard_threshold = 0.2,
                                      std::shared_ptr<thread_pool::ThreadPool> pool = nullptr) const;
 
+    // Parse a Shasta Assembly-Phased.csv to build bubble pairs directly from
+    // the assembler's authoritative phasing. Rows with Ploidy==2 are grouped
+    // by (Bubble chain, Position in bubble chain, Component); each group
+    // must contain exactly two haplotypes (0 and 1).
+    BubbleResult from_shasta_csv(const Graph& graph,
+                                 const std::string& csv_path) const;
+
 private:
     struct Bubble {
         uint32_t              source;

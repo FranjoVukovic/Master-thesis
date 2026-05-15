@@ -3,11 +3,14 @@
 
 #include <algorithm>
 #include <cassert>
+#include <fstream>
 #include <future>
 #include <numeric>
 #include <queue>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_map>
 
 std::vector<BubbleDetector::Bubble>
@@ -614,5 +617,99 @@ BubbleResult BubbleDetector::get_alts_from_shasta_names(const Graph& graph) cons
         result.alt_map[b] = a;
     }
 
+    return result;
+}
+
+namespace {
+
+// Find the index of a header column by exact name. Returns -1 if not found.
+int find_col(const std::vector<std::string>& header, const std::string& name) {
+    for (size_t i = 0; i < header.size(); ++i)
+        if (header[i] == name) return static_cast<int>(i);
+    return -1;
+}
+
+std::vector<std::string> split_csv(const std::string& line) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : line) {
+        if (c == ',') { out.push_back(std::move(cur)); cur.clear(); }
+        else cur.push_back(c);
+    }
+    out.push_back(std::move(cur));
+    return out;
+}
+
+} // namespace
+
+BubbleResult BubbleDetector::from_shasta_csv(const Graph& graph,
+                                              const std::string& csv_path) const {
+    std::ifstream in(csv_path);
+    if (!in) throw std::runtime_error("Cannot open Shasta CSV: " + csv_path);
+
+    std::string line;
+    if (!std::getline(in, line))
+        throw std::runtime_error("Empty CSV: " + csv_path);
+
+    auto header = split_csv(line);
+    const int col_name      = find_col(header, "Name");
+    const int col_ploidy    = find_col(header, "Ploidy");
+    const int col_chain     = find_col(header, "Bubble chain");
+    const int col_pos       = find_col(header, "Position in bubble chain");
+    const int col_component = find_col(header, "Component");
+    const int col_haplotype = find_col(header, "Haplotype");
+
+    if (col_name < 0 || col_ploidy < 0 || col_chain < 0 ||
+        col_pos  < 0 || col_component < 0 || col_haplotype < 0) {
+        throw std::runtime_error(
+            "Shasta CSV missing required columns "
+            "(Name, Ploidy, Bubble chain, Position in bubble chain, Component, Haplotype): "
+            + csv_path);
+    }
+
+    // (chain, position, component) -> {hap0_id, hap1_id} (UINT32_MAX = unset)
+    using Key = std::tuple<std::string, std::string, std::string>;
+    struct KeyHash {
+        size_t operator()(const Key& k) const {
+            size_t h = std::hash<std::string>{}(std::get<0>(k));
+            h ^= std::hash<std::string>{}(std::get<1>(k)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= std::hash<std::string>{}(std::get<2>(k)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_map<Key, std::pair<uint32_t,uint32_t>, KeyHash> groups;
+
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        auto cols = split_csv(line);
+        if (static_cast<int>(cols.size()) <= col_haplotype) continue;
+        if (cols[col_ploidy] != "2") continue;
+
+        const std::string& name = cols[col_name];
+        auto it = std::find_if(name.begin(), name.end(),
+                               [](unsigned char c) { return !std::isspace(c); });
+        if (it == name.end()) continue;
+
+        uint32_t id;
+        try { id = graph.get_id(name); }
+        catch (...) { continue; }  // segment not in graph (e.g. filtered out)
+
+        Key k(cols[col_chain], cols[col_pos], cols[col_component]);
+        auto ins = groups.emplace(k, std::make_pair(UINT32_MAX, UINT32_MAX));
+        auto& slot = ins.first->second;
+        if      (cols[col_haplotype] == "0") slot.first  = id;
+        else if (cols[col_haplotype] == "1") slot.second = id;
+    }
+
+    BubbleResult result;
+    for (const auto& kv : groups) {
+        uint32_t a = kv.second.first;
+        uint32_t b = kv.second.second;
+        if (a == UINT32_MAX || b == UINT32_MAX) continue;  // incomplete pair
+        result.phasing_nodes.insert(a);
+        result.phasing_nodes.insert(b);
+        result.alt_map[a] = b;
+        result.alt_map[b] = a;
+    }
     return result;
 }

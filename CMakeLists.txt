@@ -69,6 +69,7 @@ set(CORE_SOURCES
     src/Phaser.cpp
     src/Chainer.cpp
     src/HamiltonianChainer.cpp
+    src/HamiltonianPath.cpp
     src/UnzippedGraph.cpp
     src/ResultWriter.cpp
 )

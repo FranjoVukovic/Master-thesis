@@ -874,6 +874,7 @@ TEST(PhaserT14_CSV, OutputContent) {
 
 #include "Chainer.hpp"
 #include "HamiltonianChainer.hpp"
+#include "HamiltonianPath.hpp"
 #include "UnzippedGraph.hpp"
 #include "ResultWriter.hpp"
 
@@ -1073,6 +1074,103 @@ TEST(ResultWriterTest, ChainedGfaWritten) {
     EXPECT_GT(l_count, 0u);
     EXPECT_GT(pth_count, 0u);
     std::remove(path.c_str());
+}
+
+TEST(BubbleDetectorTest, FromShastaCsv) {
+    // Build a graph whose names match Shasta-phased PR.X.Y.Z.{0,1} convention,
+    // plus a homozygous spine segment.
+    Graph g;
+    g.load_from_gfa_string(
+        "S\tPR.0.1.0.0\tACGT\n"
+        "S\tPR.0.1.0.1\tACGA\n"
+        "S\tPR.1.0.0.0\tTTTT\n"
+        "S\tPR.1.0.0.1\tTTTA\n"
+        "S\tspine\tGGGG\n");
+
+    const std::string csv_path = std::string(TEST_DATA_DIR) + "/shasta_csv_test.csv";
+    {
+        std::ofstream out(csv_path);
+        out << "Name,Position in bubble chain,Ploidy,Bubble chain,Component,Haplotype,Length,Color\n"
+            << "spine,,,,,,,#808080\n"
+            << "PR.0.1.0.0,1,2,0,0,0,4,Green\n"
+            << "PR.0.1.0.1,1,2,0,0,1,4,Green\n"
+            << "PR.1.0.0.0,0,2,1,0,0,4,Green\n"
+            << "PR.1.0.0.1,0,2,1,0,1,4,Green\n";
+    }
+
+    BubbleDetector det;
+    BubbleResult r = det.from_shasta_csv(g, csv_path);
+
+    const uint32_t a0 = g.get_id("PR.0.1.0.0");
+    const uint32_t a1 = g.get_id("PR.0.1.0.1");
+    const uint32_t b0 = g.get_id("PR.1.0.0.0");
+    const uint32_t b1 = g.get_id("PR.1.0.0.1");
+
+    EXPECT_EQ(r.phasing_nodes.size(), 4u);
+    EXPECT_EQ(r.alt_map.size(),       4u);
+    EXPECT_EQ(r.alt_map.at(a0), a1);
+    EXPECT_EQ(r.alt_map.at(a1), a0);
+    EXPECT_EQ(r.alt_map.at(b0), b1);
+    EXPECT_EQ(r.alt_map.at(b1), b0);
+
+    std::remove(csv_path.c_str());
+}
+
+TEST(BubbleDetectorTest, FromShastaCsvSkipsMissingSegments) {
+    Graph g;
+    g.load_from_gfa_string(
+        "S\tPR.0.0.0.0\tACGT\n"
+        "S\tPR.0.0.0.1\tACGA\n");
+    const std::string csv_path = std::string(TEST_DATA_DIR) + "/shasta_csv_missing.csv";
+    {
+        std::ofstream out(csv_path);
+        out << "Name,Position in bubble chain,Ploidy,Bubble chain,Component,Haplotype,Length,Color\n"
+            << "PR.0.0.0.0,0,2,0,0,0,4,Green\n"
+            << "PR.0.0.0.1,0,2,0,0,1,4,Green\n"
+            << "PR.9.9.9.0,0,2,9,9,0,4,Green\n"    // not in graph
+            << "PR.9.9.9.1,0,2,9,9,1,4,Green\n";
+    }
+    BubbleDetector det;
+    BubbleResult r = det.from_shasta_csv(g, csv_path);
+    EXPECT_EQ(r.phasing_nodes.size(), 2u);  // only the pair that exists in graph
+    std::remove(csv_path.c_str());
+}
+
+TEST(HamiltonianPathTest, SolvesSimpleChain) {
+    // 4 -> 3 -> 5 -> 7 (single Hamiltonian path)
+    std::vector<uint32_t> nodes = {3, 4, 5, 7};
+    std::unordered_map<uint32_t, std::vector<uint32_t>> adj = {
+        {4, {3}}, {3, {5}}, {5, {7}}, {7, {}}
+    };
+    auto succ = [&](uint32_t u) { return adj[u]; };
+    auto r = find_hamiltonian_path(nodes, succ, {4}, {7});
+    ASSERT_TRUE(r.solved);
+    ASSERT_EQ(r.path.size(), 4u);
+    EXPECT_EQ(r.path[0], 4u);
+    EXPECT_EQ(r.path[1], 3u);
+    EXPECT_EQ(r.path[2], 5u);
+    EXPECT_EQ(r.path[3], 7u);
+    EXPECT_EQ(r.unique_prefix, r.path);  // unique solution
+}
+
+TEST(HamiltonianPathTest, NoPathReturnsEmpty) {
+    // Disconnected: 1 -> 2 ; 3 -> 4 (no Hamiltonian path of all 4)
+    std::vector<uint32_t> nodes = {1, 2, 3, 4};
+    std::unordered_map<uint32_t, std::vector<uint32_t>> adj = {
+        {1, {2}}, {2, {}}, {3, {4}}, {4, {}}
+    };
+    auto succ = [&](uint32_t u) { return adj[u]; };
+    auto r = find_hamiltonian_path(nodes, succ);
+    EXPECT_TRUE(r.solved);
+    EXPECT_TRUE(r.path.empty());
+}
+
+TEST(HamiltonianPathTest, BailsOnLargeSet) {
+    std::vector<uint32_t> nodes;
+    for (uint32_t i = 0; i < 23; ++i) nodes.push_back(i);
+    auto succ = [&](uint32_t) { return std::vector<uint32_t>{}; };
+    auto r = find_hamiltonian_path(nodes, succ);
+    EXPECT_FALSE(r.solved);
 }
 
 TEST(HamiltonianChainerTest, LinearGraphMatchesGreedy) {

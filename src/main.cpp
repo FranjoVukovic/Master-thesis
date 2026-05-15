@@ -30,14 +30,16 @@ void print_usage(const char* program_name) {
         << "  -f, --fasta            <path>           Companion FASTA (needed when GFA uses '*')\n"
         << "  -p, --pat-yak          <path>           Paternal k-mer database (.yak) for trio binning\n"
         << "  -m, --mat-yak          <path>           Maternal k-mer database (.yak) for trio binning\n"
-        << "      --bubble-mode      shasta|minhash   Bubble detection mode (default: shasta)\n"
+        << "      --bubble-mode      shasta|minhash|csv  Bubble detection mode (default: shasta)\n"
+        << "      --shasta-csv       <path>           Shasta Assembly-Phased.csv (required if --bubble-mode csv)\n"
         << "      --kmer-size        <int>            k-mer size for MinHash (default: 16)\n"
         << "      --sketch-size      <int>            MinHash sketch size (default: 1000)\n"
         << "      --jaccard-threshold <float>         MinHash Jaccard threshold (default: 0.2)\n"
         << "  -t, --threads          <int>            Number of threads (default: 4)\n"
         << "      --out-dir          <path>           Output directory (default: \".\")\n"
         << "      --prefix           <name>           Output filename prefix (default: GFA basename)\n"
-        << "      --hamiltonian                       Use HamiltonianChainer instead of greedy\n"
+        << "      --simple-chainer                    Use greedy Chainer (default: HamiltonianChainer)\n"
+        << "      --hamiltonian                       (kept for backward compat; HamiltonianChainer is default)\n"
         << "  -h, --help                              Show this message\n";
 }
 } // namespace
@@ -49,13 +51,14 @@ int main(int argc, char* argv[]) {
     std::string pat_yak_path;
     std::string mat_yak_path;
     std::string bubble_mode       = "shasta";
+    std::string shasta_csv_path;
     int         kmer_size         = 16;
     int         sketch_size       = 1000;
     double      jaccard_threshold = 0.2;
     int         num_threads       = 4;
     std::string out_dir           = ".";
     std::string prefix;
-    bool        use_hamiltonian   = false;
+    bool        use_simple_chainer = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -82,19 +85,21 @@ int main(int argc, char* argv[]) {
 
         if (arg == "--bubble-mode") {
             bubble_mode = require_next(arg);
-            if (bubble_mode != "shasta" && bubble_mode != "minhash") {
-                std::cerr << "--bubble-mode must be 'shasta' or 'minhash'\n";
+            if (bubble_mode != "shasta" && bubble_mode != "minhash" && bubble_mode != "csv") {
+                std::cerr << "--bubble-mode must be 'shasta', 'minhash', or 'csv'\n";
                 return 1;
             }
             continue;
         }
+        if (arg == "--shasta-csv") { shasta_csv_path = require_next(arg); continue; }
         if (arg == "-t" || arg == "--threads") { num_threads = std::stoi(require_next(arg)); continue; }
         if (arg == "--kmer-size")          { kmer_size         = std::stoi(require_next(arg)); continue; }
         if (arg == "--sketch-size")        { sketch_size       = std::stoi(require_next(arg)); continue; }
         if (arg == "--jaccard-threshold")  { jaccard_threshold = std::stod(require_next(arg)); continue; }
         if (arg == "--out-dir")            { out_dir           = require_next(arg); continue; }
         if (arg == "--prefix")             { prefix            = require_next(arg); continue; }
-        if (arg == "--hamiltonian")        { use_hamiltonian   = true;  continue; }
+        if (arg == "--hamiltonian")        { /* default; kept for backward compat */ continue; }
+        if (arg == "--simple-chainer")     { use_simple_chainer = true; continue; }
 
         std::cerr << "Unknown argument: " << arg << "\n";
         print_usage(argv[0]);
@@ -108,6 +113,10 @@ int main(int argc, char* argv[]) {
     }
     if (pat_yak_path.empty() != mat_yak_path.empty()) {
         std::cerr << "Both --pat-yak and --mat-yak must be provided together.\n";
+        return 1;
+    }
+    if (bubble_mode == "csv" && shasta_csv_path.empty()) {
+        std::cerr << "--bubble-mode csv requires --shasta-csv <path>.\n";
         return 1;
     }
 
@@ -153,9 +162,11 @@ int main(int argc, char* argv[]) {
         }
 
         BubbleDetector detector;
-        BubbleResult bubbles = (bubble_mode == "shasta")
-            ? detector.get_alts_from_shasta_names(graph)
-            : detector.find_unlabeled_alts(graph, kmer_size, sketch_size, jaccard_threshold, thread_pool);
+        BubbleResult bubbles;
+        if      (bubble_mode == "shasta")  bubbles = detector.get_alts_from_shasta_names(graph);
+        else if (bubble_mode == "csv")     bubbles = detector.from_shasta_csv(graph, shasta_csv_path);
+        else                                bubbles = detector.find_unlabeled_alts(
+                                                graph, kmer_size, sketch_size, jaccard_threshold, thread_pool);
 
         std::cout << "Bubble detection (" << bubble_mode << "): "
                   << bubbles.phasing_nodes.size() << " phasing nodes, "
@@ -176,9 +187,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Monte Carlo phasing complete.\n";
 
         // --- Stage 4: chaining + unzipping ---
-        ChainResult chains = use_hamiltonian
-            ? HamiltonianChainer(thread_pool).generate_chain_paths(graph, bubbles, contacts)
-            : Chainer().generate_chain_paths(graph, bubbles, &contacts);
+        ChainResult chains = use_simple_chainer
+            ? Chainer().generate_chain_paths(graph, bubbles, &contacts)
+            : HamiltonianChainer(thread_pool).generate_chain_paths(graph, bubbles, contacts);
         std::cout << "Chained: ph0=" << chains.phase_0.size()
                   << " ph1=" << chains.phase_1.size()
                   << " unphased=" << chains.unphased.size() << "\n";
