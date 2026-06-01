@@ -26,8 +26,10 @@ public:
                             const UnzippedGraph& uz,
                             const OutputConfig& cfg) const;
 
+    // One concatenated sequence per chain (haplotype path), mirroring how
+    // GFAse emits one contig per walked path — not one record per node.
     void write_fastas      (const Graph& graph,
-                            const UnzippedGraph& uz,
+                            const ChainResult& chains,
                             const OutputConfig& cfg) const;
 
 private:

@@ -567,6 +567,55 @@ TEST(PhaserT05_BubbleDet, ShastaNameMode) {
     EXPECT_EQ(br.phasing_nodes.count(uniqn), 0u);
 }
 
+// ---------- T05b GFAse bubble_pairs.csv ingestion + auto-detect ----------
+TEST(PhaserT05b_BubbleDet, GFAsePairsCsv) {
+    Graph g;
+    g.load_from_gfa(kGfaPath);
+    BubbleDetector det;
+
+    const std::string csv = std::string(TEST_DATA_DIR) + "/gfase_pairs_test.csv";
+    {
+        std::ofstream out(csv);
+        out << "name_a,name_b\n"
+            << "PR.000001.0,PR.000001.1\n"
+            << "contig1.0,contig1.1\n"
+            << "PR.000001.0,PR.000001.1\n"        // duplicate, should dedupe
+            << "ghost_node,contig1.0\n"           // unknown name → dropped
+            << "uniquenode,uniquenode\n";         // self-pair → dropped
+    }
+
+    BubbleResult br = det.from_csv(g, csv);
+    std::remove(csv.c_str());
+
+    const uint32_t pr0 = g.get_id("PR.000001.0");
+    const uint32_t pr1 = g.get_id("PR.000001.1");
+    const uint32_t c0  = g.get_id("contig1.0");
+    const uint32_t c1  = g.get_id("contig1.1");
+    const uint32_t uniqn = g.get_id("uniquenode");
+
+    EXPECT_EQ(br.alt_map.size(), 4u);            // 2 pairs × 2 directions
+    EXPECT_EQ(br.phasing_nodes.size(), 4u);
+    EXPECT_EQ(br.alt_map.at(pr0), pr1);
+    EXPECT_EQ(br.alt_map.at(pr1), pr0);
+    EXPECT_EQ(br.alt_map.at(c0),  c1);
+    EXPECT_EQ(br.alt_map.at(c1),  c0);
+    EXPECT_EQ(br.phasing_nodes.count(uniqn), 0u);
+}
+
+TEST(PhaserT05b_BubbleDet, FromCsvRejectsUnknownHeader) {
+    Graph g;
+    g.load_from_gfa(kGfaPath);
+    BubbleDetector det;
+
+    const std::string csv = std::string(TEST_DATA_DIR) + "/bad_header_test.csv";
+    {
+        std::ofstream out(csv);
+        out << "foo,bar,baz\n1,2,3\n";
+    }
+    EXPECT_THROW(det.from_csv(g, csv), std::runtime_error);
+    std::remove(csv.c_str());
+}
+
 // ---------- T06 apply_trio_constraints with real yak ----------
 TEST(PhaserT06_Trio, ApplyConstraints) {
     if (!yak_files_exist()) GTEST_SKIP() << "yak files unavailable";
@@ -994,14 +1043,13 @@ TEST(ResultWriterTest, FastaPartitionCounts) {
     Phased p = make_phased();
     Chainer ch;
     ChainResult r = ch.generate_chain_paths(p.graph, p.bubbles, nullptr);
-    UnzippedGraph uz = UnzippedGraph::build(p.graph, p.bubbles, r);
 
     OutputConfig cfg;
     cfg.out_dir = std::string(TEST_DATA_DIR);
     cfg.prefix  = "stage45_test";
 
     ResultWriter w;
-    w.write_fastas(p.graph, uz, cfg);
+    w.write_fastas(p.graph, r, cfg);
 
     auto count_records = [](const std::string& path) {
         std::ifstream in(path);
@@ -1014,15 +1062,15 @@ TEST(ResultWriterTest, FastaPartitionCounts) {
     const std::string p1 = cfg.out_dir + "/" + cfg.prefix + ".phase_1.fasta";
     const std::string pu = cfg.out_dir + "/" + cfg.prefix + ".unphased.fasta";
 
-    size_t exp0 = 0, exp1 = 0, expu = 0;
-    for (const auto& s : uz.segments()) {
-        if (s.phase == 0) ++exp0;
-        else if (s.phase == 1) ++exp1;
-        else ++expu;
-    }
-    EXPECT_EQ(count_records(p0), exp0);
-    EXPECT_EQ(count_records(p1), exp1);
-    EXPECT_EQ(count_records(pu), expu);
+    // One FASTA record per (non-empty) chain, not per node.
+    auto count_nonempty = [](const std::vector<Chain>& cs) {
+        size_t n = 0;
+        for (const auto& c : cs) if (!c.nodes.empty()) ++n;
+        return n;
+    };
+    EXPECT_EQ(count_records(p0), count_nonempty(r.phase_0));
+    EXPECT_EQ(count_records(p1), count_nonempty(r.phase_1));
+    EXPECT_EQ(count_records(pu), count_nonempty(r.unphased));
 
     std::remove(p0.c_str());
     std::remove(p1.c_str());

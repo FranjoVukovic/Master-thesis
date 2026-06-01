@@ -32,6 +32,17 @@ public:
     BubbleResult from_shasta_csv(const Graph& graph,
                                  const std::string& csv_path) const;
 
+    // Parse a GFAse bubble_pairs.csv (header: name_a,name_b) — one finalized
+    // alt pair per row, emitted by patched GFAse after its homology-based
+    // pair selection. Used for 1:1 phasing comparisons.
+    BubbleResult from_gfase_pairs_csv(const Graph& graph,
+                                      const std::string& csv_path) const;
+
+    // Header-sniffing dispatcher for --bubble-mode csv. Routes to
+    // from_shasta_csv or from_gfase_pairs_csv based on column names.
+    BubbleResult from_csv(const Graph& graph,
+                          const std::string& csv_path) const;
+
 private:
     struct Bubble {
         uint32_t              source;

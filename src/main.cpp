@@ -23,24 +23,59 @@ void print_usage(const char* program_name) {
         << " -g <file.gfa> -b <file.bam> [options]\n"
         << "\n"
         << "Required:\n"
-        << "  -g, --gfa              <path>           Assembly graph (GFA format)\n"
-        << "  -b, --bam              <path>           Hi-C / Pore-C alignments (BAM format)\n"
+        << "  -g, --gfa              <path>   Assembly graph in GFA format.\n"
+        << "  -b, --bam              <path>   Hi-C / Pore-C alignments (BAM) used to\n"
+        << "                                  build the inter-contig contact matrix.\n"
         << "\n"
-        << "Optional:\n"
-        << "  -f, --fasta            <path>           Companion FASTA (needed when GFA uses '*')\n"
-        << "  -p, --pat-yak          <path>           Paternal k-mer database (.yak) for trio binning\n"
-        << "  -m, --mat-yak          <path>           Maternal k-mer database (.yak) for trio binning\n"
-        << "      --bubble-mode      shasta|minhash|csv  Bubble detection mode (default: shasta)\n"
-        << "      --shasta-csv       <path>           Shasta Assembly-Phased.csv (required if --bubble-mode csv)\n"
-        << "      --kmer-size        <int>            k-mer size for MinHash (default: 16)\n"
-        << "      --sketch-size      <int>            MinHash sketch size (default: 1000)\n"
-        << "      --jaccard-threshold <float>         MinHash Jaccard threshold (default: 0.2)\n"
-        << "  -t, --threads          <int>            Number of threads (default: 4)\n"
-        << "      --out-dir          <path>           Output directory (default: \".\")\n"
-        << "      --prefix           <name>           Output filename prefix (default: GFA basename)\n"
-        << "      --simple-chainer                    Use greedy Chainer (default: HamiltonianChainer)\n"
-        << "      --hamiltonian                       (kept for backward compat; HamiltonianChainer is default)\n"
-        << "  -h, --help                              Show this message\n";
+        << "Sequences:\n"
+        << "  -f, --fasta            <path>   Companion FASTA. Required only when the\n"
+        << "                                  GFA stores sequences as '*' placeholders\n"
+        << "                                  (or when --bubble-mode minhash is used).\n"
+        << "\n"
+        << "Trio binning (optional, both required together):\n"
+        << "  -p, --pat-yak          <path>   Paternal k-mer database (.yak).\n"
+        << "  -m, --mat-yak          <path>   Maternal k-mer database (.yak).\n"
+        << "                                  When supplied, trio-dominant bubble nodes\n"
+        << "                                  are locked to their parental haplotype\n"
+        << "                                  before Monte Carlo phasing.\n"
+        << "\n"
+        << "Bubble / alt-pair detection:\n"
+        << "      --bubble-mode      shasta|minhash|csv   (default: shasta)\n"
+        << "                                  shasta:  pair contigs by Shasta '.0'/'.1'\n"
+        << "                                           sibling names (no sequence work).\n"
+        << "                                  minhash: topological superbubble search +\n"
+        << "                                           MinHash Jaccard filter on branch\n"
+        << "                                           sequences. Needs sequences.\n"
+        << "                                  csv:     ingest an external alt-pair list\n"
+        << "                                           (auto-detects Shasta Assembly-\n"
+        << "                                           Phased.csv vs GFAse bubble_pairs.csv\n"
+        << "                                           from the header).\n"
+        << "      --csv-file         <path>   Required for --bubble-mode csv. Accepts\n"
+        << "                                  either Shasta Assembly-Phased.csv or a\n"
+        << "                                  GFAse bubble_pairs.csv (header sniffed).\n"
+        << "      --kmer-size        <int>    [minhash only] k-mer size for sketching\n"
+        << "                                  (default: 16).\n"
+        << "      --sketch-size      <int>    [minhash only] MinHash sketch size\n"
+        << "                                  (default: 1000).\n"
+        << "      --jaccard-threshold <float> [minhash only] minimum Jaccard similarity\n"
+        << "                                  to accept a bubble pair; pairs with\n"
+        << "                                  jaccard < threshold are dropped\n"
+        << "                                  (default: 0.8).\n"
+        << "\n"
+        << "Chainer:\n"
+        << "      --simple-chainer            Use the greedy Chainer pass instead of\n"
+        << "                                  the default HamiltonianChainer (which\n"
+        << "                                  picks Hamiltonian paths through phased\n"
+        << "                                  components for cleaner unzipping).\n"
+        << "      --hamiltonian               No-op alias kept for backward compat;\n"
+        << "                                  HamiltonianChainer is already the default.\n"
+        << "\n"
+        << "Output / runtime:\n"
+        << "  -t, --threads          <int>    Worker thread count (default: 4).\n"
+        << "      --out-dir          <path>   Output directory (default: \".\").\n"
+        << "      --prefix           <name>   Output filename prefix\n"
+        << "                                  (default: stem of the GFA path).\n"
+        << "  -h, --help                      Show this message.\n";
 }
 } // namespace
 
@@ -51,10 +86,10 @@ int main(int argc, char* argv[]) {
     std::string pat_yak_path;
     std::string mat_yak_path;
     std::string bubble_mode       = "shasta";
-    std::string shasta_csv_path;
+    std::string csv_path;
     int         kmer_size         = 16;
     int         sketch_size       = 1000;
-    double      jaccard_threshold = 0.2;
+    double      jaccard_threshold = 0.8;
     int         num_threads       = 4;
     std::string out_dir           = ".";
     std::string prefix;
@@ -91,7 +126,7 @@ int main(int argc, char* argv[]) {
             }
             continue;
         }
-        if (arg == "--shasta-csv") { shasta_csv_path = require_next(arg); continue; }
+        if (arg == "--csv-file")   { csv_path = require_next(arg); continue; }
         if (arg == "-t" || arg == "--threads") { num_threads = std::stoi(require_next(arg)); continue; }
         if (arg == "--kmer-size")          { kmer_size         = std::stoi(require_next(arg)); continue; }
         if (arg == "--sketch-size")        { sketch_size       = std::stoi(require_next(arg)); continue; }
@@ -115,8 +150,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Both --pat-yak and --mat-yak must be provided together.\n";
         return 1;
     }
-    if (bubble_mode == "csv" && shasta_csv_path.empty()) {
-        std::cerr << "--bubble-mode csv requires --shasta-csv <path>.\n";
+    if (bubble_mode == "csv" && csv_path.empty()) {
+        std::cerr << "--bubble-mode csv requires --csv-file <path>.\n";
         return 1;
     }
 
@@ -164,7 +199,7 @@ int main(int argc, char* argv[]) {
         BubbleDetector detector;
         BubbleResult bubbles;
         if      (bubble_mode == "shasta")  bubbles = detector.get_alts_from_shasta_names(graph);
-        else if (bubble_mode == "csv")     bubbles = detector.from_shasta_csv(graph, shasta_csv_path);
+        else if (bubble_mode == "csv")     bubbles = detector.from_csv(graph, csv_path);
         else                                bubbles = detector.find_unlabeled_alts(
                                                 graph, kmer_size, sketch_size, jaccard_threshold, thread_pool);
 
@@ -207,7 +242,7 @@ int main(int argc, char* argv[]) {
         ResultWriter writer(thread_pool);
         writer.write_chained_gfa (graph, chains, out_cfg);
         writer.write_unzipped_gfa(graph, uz,     out_cfg);
-        writer.write_fastas      (graph, uz,     out_cfg);
+        writer.write_fastas      (graph, chains, out_cfg);
         std::cout << "Wrote results under " << out_dir << " with prefix '" << prefix << "'\n";
 
     } catch (const std::exception& e) {

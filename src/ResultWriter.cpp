@@ -33,6 +33,49 @@ void write_fasta_record(std::ofstream& out,
     }
 }
 
+std::string reverse_complement(const std::string& s) {
+    std::string r(s.size(), 'N');
+    for (size_t i = 0; i < s.size(); ++i) {
+        char c = s[s.size() - 1 - i];
+        switch (c) {
+            case 'A': case 'a': r[i] = 'T'; break;
+            case 'C': case 'c': r[i] = 'G'; break;
+            case 'G': case 'g': r[i] = 'C'; break;
+            case 'T': case 't': r[i] = 'A'; break;
+            default:            r[i] = 'N'; break;
+        }
+    }
+    return r;
+}
+
+// Overlap (in bases) on the forward edge nodes[i] -> nodes[i+1], 0 if none.
+uint32_t forward_overlap(const Graph& g, uint32_t u, uint32_t v) {
+    auto range = g.get_neighbors(u);
+    for (auto it = range.first; it != range.second; ++it)
+        if (!it->source_rev && it->target_id == v) return it->overlap_length;
+    for (auto it = range.first; it != range.second; ++it)
+        if (it->target_id == v) return it->overlap_length;
+    return 0;
+}
+
+// Stitch a chain into one sequence: orient each node, trim the overlap shared
+// with the previous node, concatenate. Shasta graphs are blunt (0M), so this
+// is plain concatenation there, but overlaps are handled for general inputs.
+std::string build_chain_sequence(const Graph& g, const Chain& c) {
+    std::string seq;
+    for (size_t j = 0; j < c.nodes.size(); ++j) {
+        std::string s = g.get_sequence(c.nodes[j]);
+        if (c.reverse[j]) s = reverse_complement(s);
+        if (j > 0) {
+            uint32_t ov = forward_overlap(g, c.nodes[j - 1], c.nodes[j]);
+            if (ov < s.size()) s.erase(0, ov);
+            else               s.clear();
+        }
+        seq += s;
+    }
+    return seq;
+}
+
 } // namespace
 
 ResultWriter::ResultWriter(std::shared_ptr<thread_pool::ThreadPool> pool)
@@ -121,30 +164,34 @@ void ResultWriter::write_unzipped_gfa(const Graph& graph,
 }
 
 void ResultWriter::write_fastas(const Graph& graph,
-                                const UnzippedGraph& uz,
+                                const ChainResult& chains,
                                 const OutputConfig& cfg) const {
     ensure_dir(cfg.out_dir);
     const std::string p0 = join_path(cfg.out_dir, cfg.prefix + ".phase_0.fasta");
     const std::string p1 = join_path(cfg.out_dir, cfg.prefix + ".phase_1.fasta");
     const std::string pu = join_path(cfg.out_dir, cfg.prefix + ".unphased.fasta");
 
-    auto write_partition = [&](const std::string& path, int8_t phase) {
+    auto write_partition = [&](const std::string& path,
+                               const std::vector<Chain>& cs,
+                               const char* tag) {
         std::ofstream out(path);
         if (!out) throw std::runtime_error("Cannot open output: " + path);
-        for (const auto& s : uz.segments()) {
-            if (s.phase != phase) continue;
-            write_fasta_record(out, s.name, graph.get_sequence(s.src_id));
+        for (size_t i = 0; i < cs.size(); ++i) {
+            if (cs[i].nodes.empty()) continue;
+            std::string seq = build_chain_sequence(graph, cs[i]);
+            if (seq.empty()) continue;
+            write_fasta_record(out, std::string(tag) + "_" + std::to_string(i), seq);
         }
     };
 
     if (pool_ && pool_->num_threads() >= 2) {
-        auto f0 = pool_->Submit([&]() { write_partition(p0,  0); return 0; });
-        auto f1 = pool_->Submit([&]() { write_partition(p1,  1); return 0; });
-        auto fu = pool_->Submit([&]() { write_partition(pu, -1); return 0; });
+        auto f0 = pool_->Submit([&]() { write_partition(p0, chains.phase_0,  "ph0"); return 0; });
+        auto f1 = pool_->Submit([&]() { write_partition(p1, chains.phase_1,  "ph1"); return 0; });
+        auto fu = pool_->Submit([&]() { write_partition(pu, chains.unphased, "un");  return 0; });
         f0.get(); f1.get(); fu.get();
     } else {
-        write_partition(p0,  0);
-        write_partition(p1,  1);
-        write_partition(pu, -1);
+        write_partition(p0, chains.phase_0,  "ph0");
+        write_partition(p1, chains.phase_1,  "ph1");
+        write_partition(pu, chains.unphased, "un");
     }
 }

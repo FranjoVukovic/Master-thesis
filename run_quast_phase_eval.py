@@ -38,6 +38,12 @@ TOOLS = [
         "phase0": "chr18.phase_0.fasta",
         "phase1": "chr18.phase_1.fasta",
     },
+    {
+        "name": "MyTool_GFAsePairs",
+        "dir": BASE / "results_gfase_pairs",
+        "phase0": "chr18.phase_0.fasta",
+        "phase1": "chr18.phase_1.fasta",
+    },
 ]
 
 REFS = [

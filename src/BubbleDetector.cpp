@@ -5,6 +5,7 @@
 #include <cassert>
 #include <fstream>
 #include <future>
+#include <iostream>
 #include <numeric>
 #include <queue>
 #include <regex>
@@ -712,4 +713,92 @@ BubbleResult BubbleDetector::from_shasta_csv(const Graph& graph,
         result.alt_map[b] = a;
     }
     return result;
+}
+
+BubbleResult BubbleDetector::from_gfase_pairs_csv(const Graph& graph,
+                                                   const std::string& csv_path) const {
+    std::ifstream in(csv_path);
+    if (!in) throw std::runtime_error("Cannot open GFAse pairs CSV: " + csv_path);
+
+    std::string line;
+    if (!std::getline(in, line))
+        throw std::runtime_error("Empty CSV: " + csv_path);
+
+    auto header = split_csv(line);
+    const int col_a = find_col(header, "name_a");
+    const int col_b = find_col(header, "name_b");
+    if (col_a < 0 || col_b < 0) {
+        throw std::runtime_error(
+            "GFAse pairs CSV missing required columns (name_a, name_b): " + csv_path);
+    }
+
+    BubbleResult result;
+    std::unordered_set<uint64_t> seen;       // canonical (min,max) dedupe key
+    size_t dropped_unknown = 0;
+    size_t dropped_self    = 0;
+
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        auto cols = split_csv(line);
+        if (static_cast<int>(cols.size()) <= std::max(col_a, col_b)) continue;
+
+        const std::string& name_a = cols[col_a];
+        const std::string& name_b = cols[col_b];
+        if (name_a.empty() || name_b.empty()) continue;
+        if (name_a == name_b) { ++dropped_self; continue; }
+
+        uint32_t a, b;
+        try { a = graph.get_id(name_a); }
+        catch (...) { ++dropped_unknown; continue; }
+        try { b = graph.get_id(name_b); }
+        catch (...) { ++dropped_unknown; continue; }
+        if (a == b) { ++dropped_self; continue; }
+
+        uint32_t lo = std::min(a, b);
+        uint32_t hi = std::max(a, b);
+        uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+        if (!seen.insert(key).second) continue;
+
+        result.phasing_nodes.insert(a);
+        result.phasing_nodes.insert(b);
+        result.alt_map[a] = b;
+        result.alt_map[b] = a;
+    }
+
+    if (dropped_unknown || dropped_self) {
+        std::cerr << "[from_gfase_pairs_csv] dropped " << dropped_unknown
+                  << " row(s) with unknown node names, " << dropped_self
+                  << " self-pair row(s)\n";
+    }
+    return result;
+}
+
+BubbleResult BubbleDetector::from_csv(const Graph& graph,
+                                       const std::string& csv_path) const {
+    std::ifstream peek(csv_path);
+    if (!peek) throw std::runtime_error("Cannot open CSV: " + csv_path);
+    std::string header_line;
+    if (!std::getline(peek, header_line))
+        throw std::runtime_error("Empty CSV: " + csv_path);
+    auto header = split_csv(header_line);
+
+    bool has_shasta = find_col(header, "Name") >= 0
+                   && find_col(header, "Ploidy") >= 0
+                   && find_col(header, "Bubble chain") >= 0;
+    bool has_gfase  = find_col(header, "name_a") >= 0
+                   && find_col(header, "name_b") >= 0;
+
+    if (has_shasta) {
+        std::cout << "CSV format: Shasta Assembly-Phased\n";
+        return from_shasta_csv(graph, csv_path);
+    }
+    if (has_gfase) {
+        std::cout << "CSV format: GFAse bubble_pairs\n";
+        return from_gfase_pairs_csv(graph, csv_path);
+    }
+    throw std::runtime_error(
+        "Unrecognized CSV header in " + csv_path +
+        ". Expected either Shasta Assembly-Phased.csv "
+        "(columns: Name, Ploidy, Bubble chain, Position in bubble chain, Component, Haplotype) "
+        "or GFAse bubble_pairs.csv (columns: name_a, name_b).");
 }
