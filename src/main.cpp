@@ -60,7 +60,7 @@ void print_usage(const char* program_name) {
         << "      --jaccard-threshold <float> [minhash only] minimum Jaccard similarity\n"
         << "                                  to accept a bubble pair; pairs with\n"
         << "                                  jaccard < threshold are dropped\n"
-        << "                                  (default: 0.8).\n"
+        << "                                  (default: 0.9).\n"
         << "\n"
         << "Chainer:\n"
         << "      --simple-chainer            Use the greedy Chainer pass instead of\n"
@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
     std::string csv_path;
     int         kmer_size         = 16;
     int         sketch_size       = 1000;
-    double      jaccard_threshold = 0.8;
+    double      jaccard_threshold = 0.9;
     int         num_threads       = 4;
     std::string out_dir           = ".";
     std::string prefix;

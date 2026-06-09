@@ -22,7 +22,7 @@ public:
     BubbleResult find_unlabeled_alts(const Graph& graph,
                                      int    k                 = 16,
                                      int    sketch_size       = 1000,
-                                     double jaccard_threshold = 0.2,
+                                     double jaccard_threshold = 0.9,
                                      std::shared_ptr<thread_pool::ThreadPool> pool = nullptr) const;
 
     // Parse a Shasta Assembly-Phased.csv to build bubble pairs directly from
